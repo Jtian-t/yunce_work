@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:recruit_platform;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+management:
+  health:
+    redis:
+      enabled: false
+
+app:
+  storage:
+    mode: local
+    local-base-path: backend-data/resumes

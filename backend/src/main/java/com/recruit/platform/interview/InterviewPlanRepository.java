@@ -1,0 +1,17 @@
+package com.recruit.platform.interview;
+
+import java.util.List;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface InterviewPlanRepository extends JpaRepository<InterviewPlan, Long> {
+
+    @EntityGraph(attributePaths = {"interviewer"})
+    List<InterviewPlan> findByCandidateIdOrderByScheduledAtAsc(Long candidateId);
+
+    @EntityGraph(attributePaths = {"interviewer", "candidate"})
+    Optional<InterviewPlan> findById(Long id);
+
+    boolean existsByCandidateIdAndInterviewerId(Long candidateId, Long interviewerId);
+}

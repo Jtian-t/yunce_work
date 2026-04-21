@@ -1,0 +1,116 @@
+# 招聘流程协同平台后端搭建方案（Java + 异步简历分析 Agent）
+
+## Summary
+- 在当前前端原型旁新增一个独立 `backend/` Java 工程，采用 `Java 21 + Spring Boot 3 + Maven`，以“模块化单体 + 外部异步 Agent”方式落地。
+- 本期范围按 `MVP 闭环` 实施，覆盖前端已展示的核心页面能力：候选人台账、详情、分发给部门、部门待办/已办、反馈提交、面试评价、看板统计、日报汇总。
+- 认证授权采用 `Spring Security + JWT/Refresh Token + RBAC`，角色包含 `HR / 部门负责人 / 面试官 / 管理员`，并预留企业 SSO 接入边界，不在本期真正对接 SSO。
+- 数据层默认采用 `MySQL 8 + Redis + MinIO`；`Redis` 用于缓存、会话黑名单、统计热点和异步任务状态，`MinIO` 存储简历原文件，数据库保存元数据与流程数据。
+- 简历分析与评判采用异步外扩 Agent：主后端负责任务创建、状态流转、结果回写和前端查询，分析执行由独立 Agent 服务完成。
+
+## Key Changes
+- 核心领域模型
+  - `User`、`Role`、`Department`：用户、角色、部门和负责人映射。
+  - `Candidate`：候选人主档，含姓名、岗位、来源、所属部门、当前状态、负责人、提交时间、最新更新时间。
+  - `ResumeAsset`：简历文件元数据，包含对象存储 key、原始文件名、文件大小、MIME、上传人。
+  - `DepartmentAssignment`：候选人分发记录，记录分发部门、负责人、截止反馈时间、当前处理状态。
+  - `DepartmentFeedback`：部门筛选反馈，含是否通过、反馈意见、淘汰原因、建议下一步、建议面试官。
+  - `InterviewPlan` / `InterviewEvaluation`：面试安排与评价，支持多轮面试、评分、优劣势、综合建议。
+  - `WorkflowEvent`：流程时间线事件，用于驱动候选人详情页时间轴和审计追踪。
+  - `ReportSnapshot`：日报快照，支持按日查询与导出。
+  - `AgentJob` / `AgentResult`：异步分析任务与回写结果，支持 `PENDING/RUNNING/SUCCEEDED/FAILED`。
+  - `Notification`：站内通知与催办消息，外部渠道走适配器预留。
+- 后端模块划分
+  - `auth`：登录、刷新令牌、当前用户、角色校验、SSO Provider 抽象。
+  - `candidate`：候选人 CRUD、筛选列表、详情、简历上传下载、时间线查询。
+  - `workflow`：状态机、分发、待办、已办、超时判定、催办。
+  - `feedback`：部门反馈提交与查询。
+  - `interview`：面试安排、面试评价写入与查询。
+  - `dashboard-report`：看板聚合、漏斗、状态分布、部门时效、日报生成。
+  - `agent-gateway`：向外部 Agent 派发任务、接收回调、持久化分析结果。
+  - `notification`：站内通知和后续企业微信/邮件适配器接口。
+- 状态机定义
+  - 候选人主状态统一为：`NEW`、`PENDING_DEPT_REVIEW`、`IN_DEPT_REVIEW`、`PENDING_INTERVIEW`、`INTERVIEWING`、`INTERVIEW_PASSED`、`OFFER_PENDING`、`OFFER_SENT`、`HIRED`、`REJECTED`、`TIMEOUT`.
+  - 前端中文展示文案由后端返回 `code + label`，避免前端直接硬编码流程语义。
+  - 所有状态变更必须落 `WorkflowEvent`，并附操作人、时间、备注、来源动作。
+- 外部 Agent 方案
+  - 主后端在候选人创建或 HR 手动触发时生成分析任务，任务负载包含 `candidateId`、`resumeFileUrl`、`targetPosition`、`department`、可选 JD 摘要。
+  - Agent 异步完成后回调内部接口，回写 `summary`、`overallScore`、`dimensionScores`、`strengths`、`risks`、`recommendedAction`、`rawReasoningDigest`。
+  - 后端仅把结构化结果暴露给前端，不把模型提供商细节泄漏到业务接口。
+  - 回调采用内部签名或服务间 Token 校验；失败任务支持重试和人工重跑。
+- 统计与日报
+  - 看板接口实时聚合候选人状态、漏斗、部门反馈时效、超时人数、今日待办。
+  - 每日定时任务在 `18:00 Asia/Shanghai` 生成日报快照，供前端直接查询当天汇总和候选人进展明细。
+  - 超时规则默认按“部门分发后 2 个工作日未反馈”判定，超时后写入异常列表并生成催办通知。
+
+## Public APIs / Interfaces
+- 认证与账户
+  - `POST /api/auth/login`
+  - `POST /api/auth/refresh`
+  - `GET /api/auth/me`
+- 候选人台账
+  - `GET /api/candidates`
+  - `POST /api/candidates`
+  - `GET /api/candidates/{id}`
+  - `PUT /api/candidates/{id}`
+  - `GET /api/candidates/{id}/timeline`
+  - `POST /api/candidates/{id}/resume`
+  - `GET /api/candidates/{id}/resume/download`
+- 分发与部门待办
+  - `POST /api/candidates/{id}/assignments`
+  - `GET /api/department/tasks`
+  - `GET /api/department/tasks/completed`
+  - `POST /api/department/tasks/{assignmentId}/remind`
+- 反馈与面试
+  - `POST /api/feedbacks`
+  - `GET /api/candidates/{id}/feedbacks`
+  - `POST /api/interviews`
+  - `POST /api/interviews/{id}/evaluations`
+  - `GET /api/candidates/{id}/interviews`
+- 看板与日报
+  - `GET /api/dashboard/overview`
+  - `GET /api/dashboard/funnel`
+  - `GET /api/dashboard/status-distribution`
+  - `GET /api/dashboard/department-efficiency`
+  - `GET /api/dashboard/alerts`
+  - `GET /api/reports/daily?date=2026-04-21`
+- Agent 接口
+  - `POST /api/candidates/{id}/analysis-jobs`
+  - `GET /api/candidates/{id}/analysis-jobs/latest`
+  - `POST /api/internal/agent/jobs/{jobId}/result`
+- 对外返回 DTO 统一包含
+  - `id`
+  - `statusCode`
+  - `statusLabel`
+  - `updatedAt`
+  - 需要前端直接渲染的展示字段，避免前端再拼流程文案
+
+## Test Plan
+- 认证与权限
+  - HR 可以创建候选人、分发、查看全局看板。
+  - 部门负责人只能看到分配给自己的待处理和已处理任务。
+  - 面试官只能提交或查看自己参与的面试评价。
+- 流程闭环
+  - 新建候选人并上传简历后，列表页和详情页可查询。
+  - 分发给部门后，候选人状态变为部门处理中，部门待办页可见。
+  - 提交通过反馈后，候选人进入待面试或面试中；提交淘汰反馈后进入已淘汰。
+  - 每次流转都会新增时间线事件，详情页时间轴可完整回放。
+- Agent 与异步任务
+  - 创建分析任务后状态从 `PENDING` 到 `RUNNING` 再到 `SUCCEEDED/FAILED`。
+  - Agent 回调失败、重复回调、签名错误都能被正确处理。
+  - 分析结果能在候选人详情中稳定查询，不阻塞主流程。
+- 报表与异常
+  - Dashboard 聚合口径与候选人状态数据一致。
+  - 日报生成任务可按指定日期重跑。
+  - 超时候选人能进入异常列表并触发催办通知。
+- 工程质量
+  - 单元测试覆盖状态机、权限判断、日报统计、Agent 回调校验。
+  - 集成测试覆盖主要 REST API、数据库事务和对象存储元数据流程。
+  - 增加 OpenAPI 文档与基础健康检查接口，便于前后端联调。
+
+## Assumptions
+- 当前仓库只有前端原型，后端将作为新建 `backend/` 工程接入，不直接改造成全栈仓库结构。
+- 本期不做多租户；默认是单公司内部招聘协同平台。
+- SSO 仅预留接口抽象和认证边界，首版仍以本地账号登录 + JWT 为主。
+- 通知首版先保证站内通知与催办数据落库；企业微信、邮件等外发适配器保留扩展点但不强制首版打通。
+- 面试“安排”首版先落业务记录，不强制接入外部日历。
+- 导出能力首版优先支持日报查询与结构化数据导出，复杂排版 PDF 可后置。
