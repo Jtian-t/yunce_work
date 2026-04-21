@@ -1,6 +1,6 @@
 import { Eye, FileSearch, Plus, Search } from "lucide-react";
-import { Link } from "react-router";
-import { useMemo, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
+import { useEffect, useMemo, useState } from "react";
 import { useData } from "../context/DataContext";
 
 const statusOptions = [
@@ -19,10 +19,22 @@ const statusOptions = [
 ];
 
 export function CandidateList() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { candidates, previewResume } = useData();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
   const [selectedDept, setSelectedDept] = useState("ALL");
+  const [pageMessage, setPageMessage] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const message = (location.state as { successMessage?: string } | null)?.successMessage;
+    if (message) {
+      setPageMessage(message);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   const departmentOptions = useMemo(
     () => ["ALL", ...new Set(candidates.map((candidate) => candidate.department).filter(Boolean) as string[])],
@@ -80,6 +92,18 @@ export function CandidateList() {
 
   return (
     <div className="p-6 space-y-6">
+      {pageMessage && (
+        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          {pageMessage}
+        </div>
+      )}
+
+      {pageError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {pageError}
+        </div>
+      )}
+
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row">
           <div className="relative flex-1">
@@ -178,7 +202,11 @@ export function CandidateList() {
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => void previewResume(candidate.id).catch(() => undefined)}
+                        onClick={() =>
+                          void previewResume(candidate.id).catch((requestError) => {
+                            setPageError(requestError instanceof Error ? requestError.message : "简历预览失败");
+                          })
+                        }
                         className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                       >
                         <FileSearch className="h-4 w-4" />

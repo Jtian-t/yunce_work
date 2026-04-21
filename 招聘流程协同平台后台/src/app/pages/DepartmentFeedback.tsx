@@ -156,7 +156,11 @@ export function DepartmentFeedback() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => void previewResume(candidate.id)}
+                onClick={() =>
+                  void previewResume(candidate.id).catch((requestError) => {
+                    setPageError(requestError instanceof Error ? requestError.message : "简历预览失败");
+                  })
+                }
                 className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
               >
                 <FileSearch className="h-4 w-4" />

@@ -5,6 +5,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Lob;
 import jakarta.persistence.OneToOne;
 import lombok.Getter;
 import lombok.Setter;
@@ -18,26 +19,32 @@ public class AgentResult extends BaseEntity {
     @JoinColumn(name = "job_id", nullable = false, unique = true)
     private AgentJob job;
 
-    @Column(length = 4000)
+    @Lob
     private String summary;
 
     @Column
     private Integer overallScore;
 
-    @Column(length = 4000)
+    @Lob
     private String dimensionScoresJson;
 
-    @Column(length = 4000)
+    @Lob
     private String strengths;
 
-    @Column(length = 4000)
+    @Lob
     private String risks;
 
-    @Column(length = 1000)
+    @Lob
     private String recommendedAction;
 
-    @Column(length = 10000)
+    @Lob
     private String rawReasoningDigest;
+
+    @Lob
+    private String parseReportJson;
+
+    @Lob
+    private String decisionReportJson;
 
     @Column(length = 255)
     private String parsedName;
@@ -47,6 +54,9 @@ public class AgentResult extends BaseEntity {
 
     @Column(length = 255)
     private String parsedEmail;
+
+    @Column(length = 255)
+    private String parsedLocation;
 
     @Column(length = 1000)
     private String parsedEducation;

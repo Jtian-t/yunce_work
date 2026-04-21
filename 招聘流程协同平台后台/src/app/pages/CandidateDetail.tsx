@@ -5,24 +5,46 @@ import {
   Calendar,
   Download,
   FileSearch,
+  History,
+  Loader2,
   Mail,
   MapPin,
   Phone,
+  RefreshCw,
+  Sparkles,
   User,
 } from "lucide-react";
 import {
   useData,
+  type AgentJob,
   type CandidateDetail as CandidateDetailType,
   type CandidateFeedback,
+  type DecisionReport,
   type InterviewPlan,
   type LookupDepartment,
   type LookupUser,
+  type ParseReport,
   type TimelineEvent,
 } from "../context/DataContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 
 function toLocalInputValue(date: Date) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatConfidence(value?: number) {
+  if (typeof value !== "number") {
+    return null;
+  }
+  return `${Math.round(value * 100)}%`;
 }
 
 export function CandidateDetail() {
@@ -37,7 +59,13 @@ export function CandidateDetail() {
     loadDepartments,
     loadUsersByRole,
     advanceCandidate,
+    createParseJob,
+    loadLatestParseJobOptional,
+    createDecisionJob,
+    loadLatestDecisionJob,
+    loadDecisionHistory,
   } = useData();
+
   const [candidate, setCandidate] = useState<CandidateDetailType | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [feedbacks, setFeedbacks] = useState<CandidateFeedback[]>([]);
@@ -45,6 +73,9 @@ export function CandidateDetail() {
   const [departments, setDepartments] = useState<LookupDepartment[]>([]);
   const [departmentLeads, setDepartmentLeads] = useState<LookupUser[]>([]);
   const [interviewers, setInterviewers] = useState<LookupUser[]>([]);
+  const [latestParseJob, setLatestParseJob] = useState<AgentJob | null>(null);
+  const [decisionJobs, setDecisionJobs] = useState<AgentJob[]>([]);
+  const [selectedDecisionJobId, setSelectedDecisionJobId] = useState<number | null>(null);
   const [departmentId, setDepartmentId] = useState<number | "">("");
   const [reviewerId, setReviewerId] = useState<number | "">("");
   const [interviewerId, setInterviewerId] = useState<number | "">("");
@@ -52,8 +83,13 @@ export function CandidateDetail() {
   const [scheduledAt, setScheduledAt] = useState(toLocalInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
   const [endsAt, setEndsAt] = useState(toLocalInputValue(new Date(Date.now() + 25 * 60 * 60 * 1000)));
   const [actionNote, setActionNote] = useState("");
+  const [parseHint, setParseHint] = useState("");
+  const [decisionHint, setDecisionHint] = useState("");
+  const [decisionDialogOpen, setDecisionDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [parseLoading, setParseLoading] = useState(false);
+  const [decisionLoading, setDecisionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -76,19 +112,36 @@ export function CandidateDetail() {
       loadDepartments(),
       loadUsersByRole("DEPARTMENT_LEAD"),
       loadUsersByRole("INTERVIEWER"),
+      loadLatestParseJobOptional(Number(id)),
+      loadDecisionHistory(Number(id)),
     ])
-      .then(([detail, timelineData, feedbackData, interviewData, departmentOptions, leadOptions, interviewerOptions]) => {
-        if (!active) {
-          return;
+      .then(
+        ([
+          detail,
+          timelineData,
+          feedbackData,
+          interviewData,
+          departmentOptions,
+          leadOptions,
+          interviewerOptions,
+          parseJob,
+          decisionHistory,
+        ]) => {
+          if (!active) {
+            return;
+          }
+          setCandidate(detail);
+          setTimeline(timelineData);
+          setFeedbacks(feedbackData);
+          setInterviews(interviewData);
+          setDepartments(departmentOptions);
+          setDepartmentLeads(leadOptions);
+          setInterviewers(interviewerOptions);
+          setLatestParseJob(parseJob);
+          setDecisionJobs(decisionHistory);
+          setSelectedDecisionJobId((current) => current ?? decisionHistory[0]?.id ?? null);
         }
-        setCandidate(detail);
-        setTimeline(timelineData);
-        setFeedbacks(feedbackData);
-        setInterviews(interviewData);
-        setDepartments(departmentOptions);
-        setDepartmentLeads(leadOptions);
-        setInterviewers(interviewerOptions);
-      })
+      )
       .catch((requestError) => {
         if (active) {
           setError(requestError instanceof Error ? requestError.message : "加载候选人详情失败");
@@ -103,7 +156,18 @@ export function CandidateDetail() {
     return () => {
       active = false;
     };
-  }, [id, loadCandidateDetail, loadCandidateTimeline, loadCandidateFeedbacks, loadCandidateInterviews, loadDepartments, loadUsersByRole, refreshKey]);
+  }, [
+    id,
+    loadCandidateDetail,
+    loadCandidateFeedbacks,
+    loadCandidateInterviews,
+    loadCandidateTimeline,
+    loadDecisionHistory,
+    loadDepartments,
+    loadLatestParseJobOptional,
+    loadUsersByRole,
+    refreshKey,
+  ]);
 
   const filteredDepartmentLeads = useMemo(() => {
     if (!departmentId) {
@@ -111,6 +175,22 @@ export function CandidateDetail() {
     }
     return departmentLeads.filter((item) => item.departmentId === Number(departmentId));
   }, [departmentId, departmentLeads]);
+
+  const latestDecisionJob = decisionJobs[0] ?? null;
+  const selectedDecisionJob = decisionJobs.find((job) => job.id === selectedDecisionJobId) ?? latestDecisionJob;
+  const parseReport = latestParseJob?.result?.parseReport ?? null;
+  const latestDecisionReport = latestDecisionJob?.result?.decisionReport ?? null;
+  const selectedDecisionReport = selectedDecisionJob?.result?.decisionReport ?? null;
+  const skillList = parseReport?.extractedSkills?.length
+    ? parseReport.extractedSkills
+    : candidate?.skillsSummary
+    ? candidate.skillsSummary.split(/[,，]/).map((item) => item.trim()).filter(Boolean)
+    : [];
+  const projectList = parseReport?.projectExperiences?.length
+    ? parseReport.projectExperiences.map((project) => project.summary)
+    : candidate?.projectSummary
+    ? candidate.projectSummary.split(/\n|；|;/).map((item) => item.trim()).filter(Boolean)
+    : [];
 
   async function runAction(payload: Parameters<typeof advanceCandidate>[1]) {
     if (!candidate) {
@@ -129,6 +209,94 @@ export function CandidateDetail() {
     }
   }
 
+  async function waitForDecision(candidateId: number) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const latest = await loadLatestDecisionJob(candidateId);
+      if (latest?.status === "SUCCEEDED") {
+        return latest;
+      }
+      if (latest?.status === "FAILED") {
+        throw new Error(latest.lastError || "辅助决策生成失败");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 400));
+    }
+    const latest = await loadLatestDecisionJob(candidateId);
+    if (!latest) {
+      throw new Error("未获取到辅助决策结果");
+    }
+    return latest;
+  }
+
+  async function waitForParse(candidateId: number) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const latest = await loadLatestParseJobOptional(candidateId);
+      if (latest?.status === "SUCCEEDED") {
+        return latest;
+      }
+      if (latest?.status === "FAILED") {
+        throw new Error(latest.lastError || "简历解析失败");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 400));
+    }
+    const latest = await loadLatestParseJobOptional(candidateId);
+    if (!latest) {
+      throw new Error("未获取到解析结果");
+    }
+    return latest;
+  }
+
+  async function handleDecisionAnalysis() {
+    if (!candidate) {
+      return;
+    }
+    setDecisionDialogOpen(true);
+    setDecisionLoading(true);
+    setError(null);
+    try {
+      await createDecisionJob(candidate.id, decisionHint || undefined);
+      const latest = await waitForDecision(candidate.id);
+      const history = await loadDecisionHistory(candidate.id);
+      setDecisionJobs(history);
+      setSelectedDecisionJobId(latest.id);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "辅助决策生成失败");
+    } finally {
+      setDecisionLoading(false);
+    }
+  }
+
+  async function handleReparseResume() {
+    if (!candidate) {
+      return;
+    }
+    if (!candidate.latestResume) {
+      setError("当前候选人还没有上传简历，无法重新解析");
+      return;
+    }
+    setParseLoading(true);
+    setError(null);
+    try {
+      await createParseJob(candidate.id, parseHint || undefined);
+      const latest = await waitForParse(candidate.id);
+      setLatestParseJob(latest);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "简历重新解析失败");
+    } finally {
+      setParseLoading(false);
+    }
+  }
+
+  async function handlePreviewResume() {
+    if (!candidate) {
+      return;
+    }
+    try {
+      await previewResume(candidate.id);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "简历预览失败");
+    }
+  }
+
   if (loading) {
     return <div className="p-6 text-gray-600">正在加载候选人详情...</div>;
   }
@@ -143,12 +311,14 @@ export function CandidateDetail() {
     );
   }
 
-  const skillList = candidate.skillsSummary
-    ? candidate.skillsSummary.split(/[,，]/).map((item) => item.trim()).filter(Boolean)
-    : [];
-  const projectList = candidate.projectSummary
-    ? candidate.projectSummary.split(/\n|；|;/).map((item) => item.trim()).filter(Boolean)
-    : [];
+  const canScheduleInterview = ["PENDING_INTERVIEW", "INTERVIEWING", "INTERVIEW_PASSED"].includes(candidate.statusCode);
+  const hasWorkflowAction =
+    ["NEW", "TIMEOUT", "IN_DEPT_REVIEW"].includes(candidate.statusCode) ||
+    canScheduleInterview ||
+    candidate.statusCode === "INTERVIEW_PASSED" ||
+    candidate.statusCode === "OFFER_PENDING" ||
+    candidate.statusCode === "OFFER_SENT" ||
+    !["HIRED", "REJECTED"].includes(candidate.statusCode);
 
   return (
     <div className="p-6 space-y-6">
@@ -196,7 +366,7 @@ export function CandidateDetail() {
                 <div className="flex flex-wrap gap-3">
                   <button
                     type="button"
-                    onClick={() => void previewResume(candidate.id)}
+                    onClick={() => void handlePreviewResume()}
                     className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
                   >
                     <FileSearch className="h-4 w-4" />
@@ -210,11 +380,139 @@ export function CandidateDetail() {
                     <Download className="h-4 w-4" />
                     下载简历
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setDecisionDialogOpen(true)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    辅助决策
+                  </button>
                 </div>
               ) : (
                 <div className="text-sm text-gray-500">暂无简历附件</div>
               )}
             </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">简历解析洞察</h3>
+                <p className="mt-1 text-sm text-gray-500">支持重新解析并保留最新结构化结果，供后续流程与辅助决策复用。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleReparseResume()}
+                disabled={parseLoading || !candidate.latestResume}
+                className="inline-flex items-center gap-2 rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {parseLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                重新解析
+              </button>
+            </div>
+
+            <label className="mt-4 block text-sm text-gray-700">
+              解析关注点（可选）
+              <input
+                value={parseHint}
+                onChange={(event) => setParseHint(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5"
+                placeholder="例如：优先识别 Java 后端年限、项目职责和城市"
+              />
+            </label>
+
+            {parseReport ? (
+              <div className="mt-4 space-y-4">
+                <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                  <div className="text-sm font-medium text-green-900">最新解析摘要</div>
+                  <div className="mt-1 text-sm text-green-800">{parseReport.summary}</div>
+                </div>
+
+                {parseReport.highlights.length > 0 && (
+                  <div>
+                    <div className="mb-2 text-sm font-medium text-gray-700">解析亮点</div>
+                    <div className="flex flex-wrap gap-2">
+                      {parseReport.highlights.map((highlight) => (
+                        <span key={highlight} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                          {highlight}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  {Object.entries(parseReport.fields).map(([fieldKey, fieldValue]) => (
+                    <div key={fieldKey} className="rounded-lg border border-gray-200 p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-gray-500">{fieldKey}</div>
+                      <div className="mt-1 text-sm font-medium text-gray-900">{fieldValue.value}</div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        置信度 {formatConfidence(fieldValue.confidence) ?? "-"} · 来源 {fieldValue.source}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {parseReport.issues.length > 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <div className="text-sm font-medium text-amber-900">待确认项</div>
+                    <ul className="mt-2 space-y-1 text-sm text-amber-800">
+                      {parseReport.issues.map((issue) => (
+                        <li key={`${issue.severity}-${issue.message}`}>- {issue.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                暂无结构化解析结果。上传简历后可在这里查看摘要、字段置信度与待确认项。
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-gray-900">最近一次辅助决策</h3>
+            {latestDecisionReport ? (
+              <div className="mt-4 space-y-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="rounded-full bg-violet-50 px-3 py-1 text-sm font-medium text-violet-700">
+                    {latestDecisionReport.recommendationLevel}
+                  </span>
+                  <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700">
+                    综合评分 {latestDecisionReport.recommendationScore}
+                  </span>
+                </div>
+                <div className="text-sm text-gray-700">{latestDecisionReport.conclusion}</div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <div className="text-sm font-medium text-gray-900">建议动作</div>
+                  <div className="mt-1 text-sm text-gray-600">{latestDecisionReport.recommendedAction}</div>
+                </div>
+                {latestDecisionReport.strengths.length > 0 && (
+                  <div>
+                    <div className="mb-2 text-sm font-medium text-gray-700">关键优势</div>
+                    <ul className="space-y-1 text-sm text-gray-700">
+                      {latestDecisionReport.strengths.map((item) => (
+                        <li key={item}>- {item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDecisionDialogOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-violet-300 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-50"
+                >
+                  <History className="h-4 w-4" />
+                  查看完整结果与历史
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-lg border border-dashed border-violet-200 bg-violet-50 p-4 text-sm text-violet-700">
+                暂无辅助决策结果。点击“辅助决策”即可综合简历、面试反馈和流程状态生成建议。
+              </div>
+            )}
           </div>
 
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -300,7 +598,7 @@ export function CandidateDetail() {
                     >
                       退回简历池
                     </button>
-                    {candidate.statusCode === "IN_DEPT_REVIEW" || candidate.statusCode === "TIMEOUT" ? (
+                    {(candidate.statusCode === "IN_DEPT_REVIEW" || candidate.statusCode === "TIMEOUT") && (
                       <button
                         type="button"
                         disabled={actionLoading}
@@ -309,14 +607,16 @@ export function CandidateDetail() {
                       >
                         催办负责人
                       </button>
-                    ) : null}
+                    )}
                   </div>
                 </div>
               )}
 
-              {(candidate.statusCode === "PENDING_INTERVIEW" || candidate.statusCode === "INTERVIEWING") && (
+              {canScheduleInterview && (
                 <div className="rounded-xl border border-gray-200 p-4">
-                  <div className="mb-3 font-medium text-gray-900">安排面试</div>
+                  <div className="mb-3 font-medium text-gray-900">
+                    {candidate.statusCode === "INTERVIEW_PASSED" ? "安排下一轮面试" : "安排面试"}
+                  </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <select
                       value={interviewerId}
@@ -363,7 +663,7 @@ export function CandidateDetail() {
                     }
                     className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    安排面试
+                    {candidate.statusCode === "INTERVIEW_PASSED" ? "安排下一轮" : "安排面试"}
                   </button>
                 </div>
               )}
@@ -439,6 +739,12 @@ export function CandidateDetail() {
                       人工淘汰
                     </button>
                   )}
+                </div>
+              )}
+
+              {!hasWorkflowAction && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                  当前候选人流程已结束，暂无可继续推进的 HR 操作。
                 </div>
               )}
             </div>
@@ -544,6 +850,158 @@ export function CandidateDetail() {
           </div>
         </div>
       </div>
+
+      <Dialog open={decisionDialogOpen} onOpenChange={setDecisionDialogOpen}>
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>辅助决策</DialogTitle>
+            <DialogDescription>综合简历解析、部门反馈、面试进展与评价，为当前候选人生成可保留的决策建议。</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-6 md:grid-cols-[1.2fr,0.8fr]">
+            <div className="space-y-4">
+              <label className="block text-sm text-gray-700">
+                决策关注点（可选）
+                <input
+                  value={decisionHint}
+                  onChange={(event) => setDecisionHint(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5"
+                  placeholder="例如：重点判断是否能直接推进 Offer，或是否还需要终面"
+                />
+              </label>
+
+              {decisionLoading ? (
+                <div className="flex min-h-52 items-center justify-center rounded-xl border border-dashed border-violet-200 bg-violet-50 text-sm text-violet-700">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  正在综合分析候选人情况...
+                </div>
+              ) : selectedDecisionReport ? (
+                <div className="space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="rounded-full bg-violet-50 px-3 py-1 text-sm font-medium text-violet-700">
+                      {selectedDecisionReport.recommendationLevel}
+                    </span>
+                    <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700">
+                      综合评分 {selectedDecisionReport.recommendationScore}
+                    </span>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">最新结论</div>
+                    <div className="mt-1 text-sm text-gray-700">{selectedDecisionReport.conclusion}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">推荐动作</div>
+                    <div className="mt-1 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+                      {selectedDecisionReport.recommendedAction}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">关键优势</div>
+                      <ul className="mt-2 space-y-1 text-sm text-gray-700">
+                        {selectedDecisionReport.strengths.length > 0 ? (
+                          selectedDecisionReport.strengths.map((item) => <li key={item}>- {item}</li>)
+                        ) : (
+                          <li>暂无</li>
+                        )}
+                      </ul>
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">关键风险</div>
+                      <ul className="mt-2 space-y-1 text-sm text-gray-700">
+                        {selectedDecisionReport.risks.length > 0 ? (
+                          selectedDecisionReport.risks.map((item) => <li key={item}>- {item}</li>)
+                        ) : (
+                          <li>暂无</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">缺失信息 / 待补问</div>
+                      <ul className="mt-2 space-y-1 text-sm text-gray-700">
+                        {selectedDecisionReport.missingInformation.length > 0 ? (
+                          selectedDecisionReport.missingInformation.map((item) => <li key={item}>- {item}</li>)
+                        ) : (
+                          <li>暂无</li>
+                        )}
+                      </ul>
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">分析依据</div>
+                      <ul className="mt-2 space-y-1 text-sm text-gray-700">
+                        {selectedDecisionReport.supportingEvidence.length > 0 ? (
+                          selectedDecisionReport.supportingEvidence.map((item) => <li key={item}>- {item}</li>)
+                        ) : (
+                          <li>暂无</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">推理摘要</div>
+                    <div className="mt-1 text-sm text-gray-700">{selectedDecisionReport.reasoningSummary}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50 p-6 text-sm text-violet-700">
+                  还没有辅助决策记录。点击下方按钮即可基于简历、部门反馈和面试记录生成首条建议。
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm font-medium text-gray-900">历史记录</div>
+              <div className="max-h-[420px] space-y-2 overflow-auto rounded-xl border border-gray-200 p-3">
+                {decisionJobs.length > 0 ? (
+                  decisionJobs.map((job) => {
+                    const report: DecisionReport | null | undefined = job.result?.decisionReport;
+                    const active = job.id === selectedDecisionJobId;
+                    return (
+                      <button
+                        key={job.id}
+                        type="button"
+                        onClick={() => setSelectedDecisionJobId(job.id)}
+                        className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                          active ? "border-violet-300 bg-violet-50" : "border-gray-200 hover:bg-gray-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-medium text-gray-900">{report?.recommendationLevel ?? job.status}</span>
+                          <span className="text-xs text-gray-500">{new Date(job.requestedAt).toLocaleString("zh-CN")}</span>
+                        </div>
+                        <div className="mt-1 text-sm text-gray-600 line-clamp-2">
+                          {report?.conclusion ?? job.result?.summary ?? "暂无结论"}
+                        </div>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-gray-500">暂无历史记录</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => void handleDecisionAnalysis()}
+              disabled={decisionLoading}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {decisionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              生成新的辅助决策
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

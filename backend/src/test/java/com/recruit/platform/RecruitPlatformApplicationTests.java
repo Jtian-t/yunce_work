@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@ActiveProfiles("local")
+@ActiveProfiles("test")
 class RecruitPlatformApplicationTests {
 
     @Autowired
@@ -145,6 +145,27 @@ class RecruitPlatformApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value("INTERVIEW_PASSED"));
 
+        mockMvc.perform(post("/api/candidates/{id}/advance", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"ADVANCE_TO_OFFER_PENDING\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value("OFFER_PENDING"));
+
+        mockMvc.perform(post("/api/candidates/{id}/advance", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"MARK_OFFER_SENT\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value("OFFER_SENT"));
+
+        mockMvc.perform(post("/api/candidates/{id}/advance", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"MARK_HIRED\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value("HIRED"));
+
         mockMvc.perform(get("/api/candidates/{id}/timeline", candidateId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(hrToken)))
                 .andExpect(status().isOk())
@@ -246,7 +267,9 @@ class RecruitPlatformApplicationTests {
                         .header(HttpHeaders.AUTHORIZATION, bearer(hrToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.jobType").value("PARSE"))
-                .andExpect(jsonPath("$.result.parsedCandidateDraft.projectSummary").exists());
+                .andExpect(jsonPath("$.result.parsedCandidateDraft.projectSummary").exists())
+                .andExpect(jsonPath("$.result.parseReport.summary").exists())
+                .andExpect(jsonPath("$.result.parseReport.fields.email.value").exists());
 
         String schedulePayload = """
                 {
@@ -298,6 +321,47 @@ class RecruitPlatformApplicationTests {
                         .header(HttpHeaders.AUTHORIZATION, bearer(hrToken)))
                 .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string(HttpHeaders.CONTENT_DISPOSITION, org.hamcrest.Matchers.containsString("inline")));
+    }
+
+    @Test
+    void decisionJobsShouldKeepHistoryAndExposeLatestResult() throws Exception {
+        String hrToken = login("hr", "Password123!");
+        Long techDepartmentId = departmentRepository.findByCode("TECH").orElseThrow().getId();
+        Long techLeadId = userRepository.findByUsername("techlead").orElseThrow().getId();
+        Long candidateId = createCandidate(hrToken, techDepartmentId, techLeadId, "辅助决策候选人");
+        uploadResume(hrToken, candidateId);
+
+        mockMvc.perform(post("/api/candidates/{id}/parse-jobs", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"hint\":\"优先识别 Java 和项目经历\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCEEDED"));
+
+        mockMvc.perform(post("/api/candidates/{id}/decision-jobs", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"focusHint\":\"判断是否值得安排终面\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/candidates/{id}/decision-jobs", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"focusHint\":\"重点关注简历与岗位匹配度\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/candidates/{id}/decision-jobs/latest", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobType").value("DECISION"))
+                .andExpect(jsonPath("$.result.decisionReport.conclusion").exists())
+                .andExpect(jsonPath("$.result.decisionReport.recommendedAction").exists());
+
+        mockMvc.perform(get("/api/candidates/{id}/decision-jobs", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].jobType").value("DECISION"))
+                .andExpect(jsonPath("$.length()").value(2));
     }
 
     private Long createCandidate(String token, Long departmentId, Long ownerId, String name) throws Exception {

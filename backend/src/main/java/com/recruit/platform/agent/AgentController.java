@@ -35,6 +35,21 @@ public class AgentController {
         return agentService.latestParse(candidateId);
     }
 
+    @PostMapping("/api/candidates/{candidateId}/decision-jobs")
+    AgentJobResponse createDecisionJob(@PathVariable Long candidateId, @RequestBody(required = false) CreateDecisionJobRequest request) {
+        return agentService.createDecisionJob(candidateId, request == null ? new CreateDecisionJobRequest(null) : request);
+    }
+
+    @GetMapping("/api/candidates/{candidateId}/decision-jobs/latest")
+    AgentJobResponse latestDecision(@PathVariable Long candidateId) {
+        return agentService.latestDecision(candidateId);
+    }
+
+    @GetMapping("/api/candidates/{candidateId}/decision-jobs")
+    java.util.List<AgentJobResponse> decisionHistory(@PathVariable Long candidateId) {
+        return agentService.decisionHistory(candidateId);
+    }
+
     @PostMapping("/api/internal/agent/jobs/{jobId}/result")
     AgentJobResponse callback(
             @PathVariable Long jobId,
@@ -51,5 +66,14 @@ public class AgentController {
             @Valid @RequestBody AgentCallbackRequest request
     ) {
         return agentService.handleParseCallback(jobId, callbackToken, request);
+    }
+
+    @PostMapping("/api/internal/agent/decision-jobs/{jobId}/result")
+    AgentJobResponse decisionCallback(
+            @PathVariable Long jobId,
+            @RequestHeader("X-Agent-Token") String callbackToken,
+            @Valid @RequestBody AgentCallbackRequest request
+    ) {
+        return agentService.handleDecisionCallback(jobId, callbackToken, request);
     }
 }

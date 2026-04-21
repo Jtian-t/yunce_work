@@ -164,10 +164,48 @@ export interface ParsedCandidateDraft {
   name?: string | null;
   phone?: string | null;
   email?: string | null;
+  location?: string | null;
   education?: string | null;
   experience?: string | null;
   skillsSummary?: string | null;
   projectSummary?: string | null;
+}
+
+export interface ParseFieldValue {
+  value: string;
+  confidence: number;
+  source: string;
+}
+
+export interface ParseIssue {
+  severity: string;
+  message: string;
+}
+
+export interface ParseProject {
+  title: string;
+  summary: string;
+}
+
+export interface ParseReport {
+  summary: string;
+  highlights: string[];
+  extractedSkills: string[];
+  projectExperiences: ParseProject[];
+  fields: Record<string, ParseFieldValue>;
+  issues: ParseIssue[];
+}
+
+export interface DecisionReport {
+  conclusion: string;
+  recommendationScore: number;
+  recommendationLevel: string;
+  recommendedAction: string;
+  strengths: string[];
+  risks: string[];
+  missingInformation: string[];
+  supportingEvidence: string[];
+  reasoningSummary: string;
 }
 
 export interface AgentJobResult {
@@ -179,12 +217,14 @@ export interface AgentJobResult {
   recommendedAction?: string | null;
   rawReasoningDigest?: string | null;
   parsedCandidateDraft?: ParsedCandidateDraft | null;
+  parseReport?: ParseReport | null;
+  decisionReport?: DecisionReport | null;
 }
 
 export interface AgentJob {
   id: number;
   candidateId: number;
-  jobType: "ANALYSIS" | "PARSE";
+  jobType: "ANALYSIS" | "PARSE" | "DECISION";
   status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
   requestedAt: string;
   completedAt?: string | null;
@@ -244,6 +284,10 @@ interface DataContextType {
   uploadResume: (candidateId: number, file: File) => Promise<void>;
   createParseJob: (candidateId: number, hint?: string) => Promise<AgentJob>;
   loadLatestParseJob: (candidateId: number) => Promise<AgentJob>;
+  loadLatestParseJobOptional: (candidateId: number) => Promise<AgentJob | null>;
+  createDecisionJob: (candidateId: number, focusHint?: string) => Promise<AgentJob>;
+  loadLatestDecisionJob: (candidateId: number) => Promise<AgentJob | null>;
+  loadDecisionHistory: (candidateId: number) => Promise<AgentJob[]>;
   advanceCandidate: (candidateId: number, payload: AdvanceCandidatePayload) => Promise<CandidateDetail>;
   loadDepartments: () => Promise<LookupDepartment[]>;
   loadUsersByRole: (role: "DEPARTMENT_LEAD" | "INTERVIEWER") => Promise<LookupUser[]>;
@@ -290,6 +334,32 @@ function mapCandidateDetail(detail: any): CandidateDetail {
     skillsSummary: detail.skillsSummary,
     projectSummary: detail.projectSummary,
     latestResume: detail.latestResume ?? null,
+  };
+}
+
+function mapAgentJob(job: any): AgentJob {
+  return {
+    id: job.id,
+    candidateId: job.candidateId,
+    jobType: job.jobType,
+    status: job.status,
+    requestedAt: job.requestedAt,
+    completedAt: job.completedAt ?? null,
+    lastError: job.lastError ?? null,
+    result: job.result
+      ? {
+          summary: job.result.summary ?? null,
+          overallScore: job.result.overallScore ?? null,
+          dimensionScores: job.result.dimensionScores ?? null,
+          strengths: job.result.strengths ?? null,
+          risks: job.result.risks ?? null,
+          recommendedAction: job.result.recommendedAction ?? null,
+          rawReasoningDigest: job.result.rawReasoningDigest ?? null,
+          parsedCandidateDraft: job.result.parsedCandidateDraft ?? null,
+          parseReport: job.result.parseReport ?? null,
+          decisionReport: job.result.decisionReport ?? null,
+        }
+      : null,
   };
 }
 
@@ -366,9 +436,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("application/json")) {
         const payload = await response.json();
-        throw new Error(payload.message ?? `请求失败: ${response.status}`);
+        const error = new Error(payload.message ?? `请求失败: ${response.status}`) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
       }
-      throw new Error((await response.text()) || `请求失败: ${response.status}`);
+      const error = new Error((await response.text()) || `请求失败: ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
 
     if (response.status === 204) {
@@ -376,6 +450,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     return response.json() as Promise<T>;
+  }
+
+  async function apiRequestOptional<T>(path: string, init?: RequestInit): Promise<T | null> {
+    try {
+      return await apiRequest<T>(path, init);
+    } catch (requestError) {
+      if ((requestError as { status?: number })?.status === 404) {
+        return null;
+      }
+      throw requestError;
+    }
   }
 
   async function fetchBlob(path: string) {
@@ -490,16 +575,43 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }
 
   async function createParseJob(candidateId: number, hint?: string) {
-    return apiRequest<AgentJob>(`/api/candidates/${candidateId}/parse-jobs`, {
+    const job = await apiRequest<any>(`/api/candidates/${candidateId}/parse-jobs`, {
       method: "POST",
       body: JSON.stringify({
         hint,
       }),
     });
+    return mapAgentJob(job);
   }
 
   async function loadLatestParseJob(candidateId: number) {
-    return apiRequest<AgentJob>(`/api/candidates/${candidateId}/parse-jobs/latest`);
+    const job = await apiRequest<any>(`/api/candidates/${candidateId}/parse-jobs/latest`);
+    return mapAgentJob(job);
+  }
+
+  async function loadLatestParseJobOptional(candidateId: number) {
+    const job = await apiRequestOptional<any>(`/api/candidates/${candidateId}/parse-jobs/latest`);
+    return job ? mapAgentJob(job) : null;
+  }
+
+  async function createDecisionJob(candidateId: number, focusHint?: string) {
+    const job = await apiRequest<any>(`/api/candidates/${candidateId}/decision-jobs`, {
+      method: "POST",
+      body: JSON.stringify({
+        focusHint,
+      }),
+    });
+    return mapAgentJob(job);
+  }
+
+  async function loadLatestDecisionJob(candidateId: number) {
+    const job = await apiRequestOptional<any>(`/api/candidates/${candidateId}/decision-jobs/latest`);
+    return job ? mapAgentJob(job) : null;
+  }
+
+  async function loadDecisionHistory(candidateId: number) {
+    const jobs = await apiRequest<any[]>(`/api/candidates/${candidateId}/decision-jobs`);
+    return jobs.map(mapAgentJob);
   }
 
   async function advanceCandidate(candidateId: number, payload: AdvanceCandidatePayload) {
@@ -568,10 +680,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }
 
   async function previewResume(candidateId: number) {
-    const blob = await fetchBlob(`/api/candidates/${candidateId}/resume/preview`);
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank", "noopener,noreferrer");
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    const previewWindow = window.open("", "_blank");
+    if (previewWindow) {
+      previewWindow.document.write("<title>简历预览加载中</title><p style='font-family:sans-serif;padding:24px;'>正在加载简历预览...</p>");
+      previewWindow.document.close();
+    }
+
+    try {
+      const blob = await fetchBlob(`/api/candidates/${candidateId}/resume/preview`);
+      const url = URL.createObjectURL(blob);
+      if (previewWindow) {
+        previewWindow.location.replace(url);
+      } else {
+        window.open(url, "_blank");
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (requestError) {
+      if (previewWindow && !previewWindow.closed) {
+        previewWindow.close();
+      }
+      throw requestError;
+    }
   }
 
   useEffect(() => {
@@ -602,6 +731,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       uploadResume,
       createParseJob,
       loadLatestParseJob,
+      loadLatestParseJobOptional,
+      createDecisionJob,
+      loadLatestDecisionJob,
+      loadDecisionHistory,
       advanceCandidate,
       loadDepartments,
       loadUsersByRole,

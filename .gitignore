@@ -14,6 +14,10 @@ backend/*.json
 # Local runtime logs
 *.log
 
+# Local env
+.env
+.env.local
+
 # IDE
 .idea/
 .vscode/

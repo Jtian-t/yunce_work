@@ -76,7 +76,7 @@ public class CandidateAdvanceService {
 
     private void scheduleInterview(Long candidateId, Candidate candidate, AdvanceCandidateRequest request) {
         requireState(candidate, CandidateAdvanceAction.SCHEDULE_INTERVIEW,
-                CandidateStatus.PENDING_INTERVIEW, CandidateStatus.INTERVIEWING);
+                CandidateStatus.PENDING_INTERVIEW, CandidateStatus.INTERVIEWING, CandidateStatus.INTERVIEW_PASSED);
         if (request.interviewerId() == null || request.roundLabel() == null || request.scheduledAt() == null || request.endsAt() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Interview fields are required");
         }

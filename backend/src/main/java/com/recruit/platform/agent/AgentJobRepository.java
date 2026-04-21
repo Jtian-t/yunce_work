@@ -12,4 +12,7 @@ public interface AgentJobRepository extends JpaRepository<AgentJob, Long> {
 
     @EntityGraph(attributePaths = {"candidate"})
     Optional<AgentJob> findTopByCandidateIdAndJobTypeOrderByCreatedAtDesc(Long candidateId, AgentJobType jobType);
+
+    @EntityGraph(attributePaths = {"candidate"})
+    java.util.List<AgentJob> findByCandidateIdAndJobTypeOrderByCreatedAtDesc(Long candidateId, AgentJobType jobType);
 }

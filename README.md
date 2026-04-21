@@ -297,3 +297,10 @@ npm run build
 - 接入真实 MySQL / Redis / MinIO 环境
 - 为外部简历分析 Agent 增加消息队列或任务调度能力
 - 补充更多接口测试和浏览器级 E2E 测试
+
+## V2 本地启动入口
+
+- V2 实施计划：`plan2.md`
+- Docker 本地环境说明：`docs/local-docker-setup.md`
+- 一键启动依赖服务：`docker compose up -d`
+- 后端测试 profile：`backend/src/main/resources/application-test.yml`

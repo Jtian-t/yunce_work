@@ -1,7 +1,12 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ArrowLeft, FileText, Loader2, Sparkles, Upload } from "lucide-react";
-import { useData, type CandidateUpsertPayload, type ParsedCandidateDraft } from "../context/DataContext";
+import {
+  useData,
+  type CandidateUpsertPayload,
+  type ParseReport,
+  type ParsedCandidateDraft,
+} from "../context/DataContext";
 
 type AssignmentMode = "POOL" | "ASSIGN";
 
@@ -48,6 +53,7 @@ export function CandidateCreate() {
   const [error, setError] = useState<string | null>(null);
   const [parseHint, setParseHint] = useState("");
   const [parseMessage, setParseMessage] = useState<string | null>(null);
+  const [latestParseReport, setLatestParseReport] = useState<ParseReport | null>(null);
 
   const filteredReviewers = useMemo(() => {
     if (!departmentId) {
@@ -102,6 +108,7 @@ export function CandidateCreate() {
       name: current.name || parsed.name || "",
       phone: current.phone || parsed.phone || "",
       email: current.email || parsed.email || "",
+      location: current.location || parsed.location || "",
       education: current.education || parsed.education || "",
       experience: current.experience || parsed.experience || "",
       skillsSummary: current.skillsSummary || parsed.skillsSummary || "",
@@ -147,7 +154,8 @@ export function CandidateCreate() {
       await createParseJob(candidateId, parseHint || undefined);
       const latest = await waitForParse(candidateId);
       mergeParsedDraft(latest.result?.parsedCandidateDraft);
-      setParseMessage(latest.status === "SUCCEEDED" ? "已根据简历自动预填，可继续手动调整" : "解析已创建，请稍后刷新");
+      setLatestParseReport(latest.result?.parseReport ?? null);
+      setParseMessage(latest.result?.parseReport?.summary ?? (latest.status === "SUCCEEDED" ? "已根据简历自动预填，可继续手动调整" : "解析已创建，请稍后刷新"));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "简历解析失败");
     } finally {
@@ -201,7 +209,11 @@ export function CandidateCreate() {
         });
       }
 
-      navigate(`/candidates/${candidateId}`);
+      navigate("/candidates", {
+        state: {
+          successMessage: `候选人已保存，当前已${assignmentMode === "ASSIGN" ? "分发到部门" : "进入简历池"}。`,
+        },
+      });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "保存候选人失败");
     } finally {
@@ -348,6 +360,8 @@ export function CandidateCreate() {
                   const nextFile = event.target.files?.[0] ?? null;
                   setFile(nextFile);
                   setResumeUploaded(false);
+                  setLatestParseReport(null);
+                  setParseMessage(null);
                 }}
               />
               <div>
@@ -380,6 +394,39 @@ export function CandidateCreate() {
             {parseMessage && (
               <div className="mt-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
                 {parseMessage}
+              </div>
+            )}
+
+            {latestParseReport && (
+              <div className="mt-4 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                <div>
+                  <div className="text-sm font-medium text-gray-900">解析摘要</div>
+                  <div className="mt-1 text-sm text-gray-600">{latestParseReport.summary}</div>
+                </div>
+
+                {latestParseReport.highlights.length > 0 && (
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">核心亮点</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {latestParseReport.highlights.map((highlight) => (
+                        <span key={highlight} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                          {highlight}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {latestParseReport.issues.length > 0 && (
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">待确认项</div>
+                    <ul className="mt-2 space-y-1 text-sm text-amber-700">
+                      {latestParseReport.issues.map((issue) => (
+                        <li key={`${issue.severity}-${issue.message}`}>- {issue.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
           </div>

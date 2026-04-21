@@ -12,11 +12,22 @@ import com.recruit.platform.common.enums.AgentJobStatus;
 import com.recruit.platform.common.enums.AgentJobType;
 import com.recruit.platform.common.enums.RoleType;
 import com.recruit.platform.config.AppAgentProperties;
+import com.recruit.platform.feedback.DepartmentFeedback;
+import com.recruit.platform.feedback.DepartmentFeedbackRepository;
+import com.recruit.platform.interview.InterviewEvaluation;
+import com.recruit.platform.interview.InterviewEvaluationRepository;
+import com.recruit.platform.interview.InterviewPlan;
+import com.recruit.platform.interview.InterviewPlanRepository;
 import com.recruit.platform.security.CurrentUserService;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,17 +43,17 @@ public class AgentService {
     private final AgentDispatcher agentDispatcher;
     private final ObjectMapper objectMapper;
     private final AppAgentProperties agentProperties;
+    private final DepartmentFeedbackRepository feedbackRepository;
+    private final InterviewPlanRepository interviewPlanRepository;
+    private final InterviewEvaluationRepository interviewEvaluationRepository;
 
     @Transactional
     public AgentJobResponse createAnalysisJob(Long candidateId, CreateAnalysisJobRequest request) {
         currentUserService.requireAnyRole(RoleType.HR, RoleType.ADMIN);
         Candidate candidate = candidateService.getEntity(candidateId);
-        ResumeAsset resumeAsset = candidateService.getLatestResume(candidateId);
-        if (resumeAsset == null) {
-            throw new NotFoundException("Resume must be uploaded before analysis");
-        }
+        ResumeAsset resumeAsset = requireLatestResume(candidateId);
 
-        Map<String, Object> payload = new HashMap<>();
+        Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("candidateId", candidate.getId());
         payload.put("resumeFileUrl", agentProperties.callbackBaseUrl() + "/api/candidates/" + candidate.getId() + "/resume/download");
         payload.put("targetPosition", candidate.getPosition());
@@ -60,20 +71,19 @@ public class AgentService {
     public AgentJobResponse createParseJob(Long candidateId, CreateParseJobRequest request) {
         currentUserService.requireAnyRole(RoleType.HR, RoleType.ADMIN);
         Candidate candidate = candidateService.getEntity(candidateId);
-        ResumeAsset resumeAsset = candidateService.getLatestResume(candidateId);
-        if (resumeAsset == null) {
-            throw new NotFoundException("Resume must be uploaded before parsing");
-        }
+        ResumeAsset resumeAsset = requireLatestResume(candidateId);
 
-        Map<String, Object> payload = new HashMap<>();
+        Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("candidateId", candidate.getId());
         payload.put("objectKey", resumeAsset.getObjectKey());
         payload.put("originalFileName", resumeAsset.getOriginalFileName());
+        payload.put("contentType", resumeAsset.getContentType());
         payload.put("resumeFileUrl", agentProperties.callbackBaseUrl() + "/api/candidates/" + candidate.getId() + "/resume/preview");
         payload.put("hint", request.hint());
         payload.put("fallbackName", candidate.getName());
         payload.put("fallbackPhone", candidate.getPhone());
         payload.put("fallbackEmail", candidate.getEmail());
+        payload.put("fallbackLocation", candidate.getLocation());
         payload.put("fallbackEducation", candidate.getEducation());
         payload.put("fallbackExperience", candidate.getExperience());
         payload.put("fallbackSkillsSummary", candidate.getSkillsSummary());
@@ -84,16 +94,62 @@ public class AgentService {
         return toResponse(saved);
     }
 
+    @Transactional
+    public AgentJobResponse createDecisionJob(Long candidateId, CreateDecisionJobRequest request) {
+        currentUserService.requireAnyRole(RoleType.HR, RoleType.ADMIN);
+        Candidate candidate = candidateService.getEntity(candidateId);
+        ResumeAsset resumeAsset = requireLatestResume(candidateId);
+        List<DepartmentFeedback> feedbacks = feedbackRepository.findByCandidateIdOrderByCreatedAtDesc(candidateId);
+        List<InterviewPlan> interviews = interviewPlanRepository.findByCandidateIdOrderByScheduledAtAsc(candidateId);
+        List<InterviewEvaluation> evaluations = interviewEvaluationRepository.findByCandidateIdOrderByCreatedAtDesc(candidateId);
+
+        Map<Long, List<InterviewEvaluation>> evaluationsByPlanId = evaluations.stream()
+                .collect(Collectors.groupingBy(
+                        evaluation -> evaluation.getInterviewPlan().getId(),
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("candidateId", candidate.getId());
+        payload.put("focusHint", request.focusHint());
+        payload.put("statusCode", candidate.getStatus().getCode());
+        payload.put("statusLabel", candidate.getStatus().getLabel());
+        payload.put("position", candidate.getPosition());
+        payload.put("nextAction", candidate.getNextAction());
+        payload.put("department", candidate.getDepartment() == null ? null : candidate.getDepartment().getName());
+        payload.put("resumeFileUrl", agentProperties.callbackBaseUrl() + "/api/candidates/" + candidate.getId() + "/resume/preview");
+        payload.put("objectKey", resumeAsset.getObjectKey());
+        payload.put("originalFileName", resumeAsset.getOriginalFileName());
+        payload.put("contentType", resumeAsset.getContentType());
+        payload.put("parseReport", latestParseReport(candidateId).orElseGet(() -> fallbackParseReport(candidate)));
+        payload.put("feedbacks", feedbacks.stream().map(this::toFeedbackPayload).toList());
+        payload.put("interviews", interviews.stream()
+                .map(interview -> toInterviewPayload(interview, evaluationsByPlanId.getOrDefault(interview.getId(), List.of())))
+                .toList());
+
+        AgentJob saved = createJob(candidate, AgentJobType.DECISION, payload);
+        agentDispatcher.dispatch(saved, saved.getRequestPayloadJson());
+        return toResponse(saved);
+    }
+
     public AgentJobResponse latestAnalysis(Long candidateId) {
-        AgentJob job = agentJobRepository.findTopByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, AgentJobType.ANALYSIS)
-                .orElseThrow(() -> new NotFoundException("Analysis job not found"));
-        return toResponse(job);
+        return latestByType(candidateId, AgentJobType.ANALYSIS);
     }
 
     public AgentJobResponse latestParse(Long candidateId) {
-        AgentJob job = agentJobRepository.findTopByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, AgentJobType.PARSE)
-                .orElseThrow(() -> new NotFoundException("Parse job not found"));
-        return toResponse(job);
+        return latestByType(candidateId, AgentJobType.PARSE);
+    }
+
+    public AgentJobResponse latestDecision(Long candidateId) {
+        return latestByType(candidateId, AgentJobType.DECISION);
+    }
+
+    public List<AgentJobResponse> decisionHistory(Long candidateId) {
+        return agentJobRepository.findByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, AgentJobType.DECISION)
+                .stream()
+                .map(this::toResponse)
+                .toList();
     }
 
     @Transactional
@@ -104,6 +160,11 @@ public class AgentService {
     @Transactional
     public AgentJobResponse handleParseCallback(Long jobId, String token, AgentCallbackRequest request) {
         return handleCallback(jobId, token, request, AgentJobType.PARSE);
+    }
+
+    @Transactional
+    public AgentJobResponse handleDecisionCallback(Long jobId, String token, AgentCallbackRequest request) {
+        return handleCallback(jobId, token, request, AgentJobType.DECISION);
     }
 
     private AgentJobResponse handleCallback(Long jobId, String token, AgentCallbackRequest request, AgentJobType expectedType) {
@@ -120,20 +181,40 @@ public class AgentService {
             job.setCompletedAt(OffsetDateTime.now());
             AgentResult result = agentResultRepository.findByJobId(jobId).orElseGet(AgentResult::new);
             result.setJob(job);
-            result.setSummary(request.summary());
-            result.setOverallScore(request.overallScore());
-            result.setDimensionScoresJson(write(request.dimensionScores()));
-            result.setStrengths(request.strengths());
-            result.setRisks(request.risks());
-            result.setRecommendedAction(request.recommendedAction());
-            result.setRawReasoningDigest(request.rawReasoningDigest());
-            result.setParsedName(request.parsedName());
-            result.setParsedPhone(request.parsedPhone());
-            result.setParsedEmail(request.parsedEmail());
-            result.setParsedEducation(request.parsedEducation());
-            result.setParsedExperience(request.parsedExperience());
-            result.setParsedSkillsSummary(request.parsedSkillsSummary());
-            result.setParsedProjectSummary(request.parsedProjectSummary());
+            result.setSummary(firstNonBlank(
+                    request.summary(),
+                    request.parseReport() == null ? null : request.parseReport().summary(),
+                    request.decisionReport() == null ? null : request.decisionReport().conclusion()
+            ));
+            result.setOverallScore(firstNonNull(
+                    request.overallScore(),
+                    request.decisionReport() == null ? null : request.decisionReport().recommendationScore()
+            ));
+            result.setDimensionScoresJson(write(request.dimensionScores() == null ? Map.of() : request.dimensionScores()));
+            result.setStrengths(firstNonBlank(
+                    request.strengths(),
+                    request.decisionReport() == null ? null : String.join("；", request.decisionReport().strengths())
+            ));
+            result.setRisks(firstNonBlank(
+                    request.risks(),
+                    request.decisionReport() == null ? null : String.join("；", request.decisionReport().risks())
+            ));
+            result.setRecommendedAction(firstNonBlank(
+                    request.recommendedAction(),
+                    request.decisionReport() == null ? null : request.decisionReport().recommendedAction()
+            ));
+            result.setRawReasoningDigest(firstNonBlank(
+                    request.rawReasoningDigest(),
+                    request.decisionReport() == null ? null : request.decisionReport().reasoningSummary()
+            ));
+            applyLegacyParsedDraft(result, request);
+            if (request.parseReport() != null) {
+                result.setParseReportJson(write(request.parseReport()));
+                applyParseReportDraft(result, request.parseReport());
+            }
+            if (request.decisionReport() != null) {
+                result.setDecisionReportJson(write(request.decisionReport()));
+            }
             agentResultRepository.save(result);
         } else {
             job.setStatus(AgentJobStatus.FAILED);
@@ -154,26 +235,101 @@ public class AgentService {
         return agentJobRepository.save(job);
     }
 
+    private AgentJobResponse latestByType(Long candidateId, AgentJobType jobType) {
+        AgentJob job = agentJobRepository.findTopByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, jobType)
+                .orElseThrow(() -> new NotFoundException(jobType.name() + " job not found"));
+        return toResponse(job);
+    }
+
+    private ResumeAsset requireLatestResume(Long candidateId) {
+        ResumeAsset resumeAsset = candidateService.getLatestResume(candidateId);
+        if (resumeAsset == null) {
+            throw new NotFoundException("Resume must be uploaded before creating agent jobs");
+        }
+        return resumeAsset;
+    }
+
+    private Map<String, Object> toFeedbackPayload(DepartmentFeedback feedback) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("reviewer", feedback.getReviewer().getDisplayName());
+        payload.put("decision", feedback.getDecision().name());
+        payload.put("feedback", feedback.getFeedback());
+        payload.put("rejectReason", feedback.getRejectReason());
+        payload.put("nextStep", feedback.getNextStep());
+        payload.put("suggestedInterviewer", feedback.getSuggestedInterviewer());
+        payload.put("createdAt", feedback.getCreatedAt());
+        return payload;
+    }
+
+    private Map<String, Object> toInterviewPayload(InterviewPlan interviewPlan, List<InterviewEvaluation> evaluations) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("roundLabel", interviewPlan.getRoundLabel());
+        payload.put("interviewer", interviewPlan.getInterviewer().getDisplayName());
+        payload.put("status", interviewPlan.getStatus().name());
+        payload.put("scheduledAt", interviewPlan.getScheduledAt());
+        payload.put("endsAt", interviewPlan.getEndsAt());
+        payload.put("evaluations", evaluations.stream().map(evaluation -> {
+            Map<String, Object> evaluationPayload = new LinkedHashMap<>();
+            evaluationPayload.put("interviewer", evaluation.getInterviewer().getDisplayName());
+            evaluationPayload.put("result", evaluation.getResult().name());
+            evaluationPayload.put("score", evaluation.getScore());
+            evaluationPayload.put("evaluation", evaluation.getEvaluation());
+            evaluationPayload.put("strengths", evaluation.getStrengths());
+            evaluationPayload.put("weaknesses", evaluation.getWeaknesses());
+            evaluationPayload.put("suggestion", evaluation.getSuggestion());
+            evaluationPayload.put("createdAt", evaluation.getCreatedAt());
+            return evaluationPayload;
+        }).toList());
+        return payload;
+    }
+
+    private Optional<ParseReportResponse> latestParseReport(Long candidateId) {
+        return agentJobRepository.findTopByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, AgentJobType.PARSE)
+                .flatMap(job -> agentResultRepository.findByJobId(job.getId()))
+                .map(this::readParseReport)
+                .or(() -> Optional.empty());
+    }
+
+    private ParseReportResponse fallbackParseReport(Candidate candidate) {
+        Map<String, ParseFieldValueResponse> fields = new LinkedHashMap<>();
+        putField(fields, "name", candidate.getName(), 0.4, "candidate_profile");
+        putField(fields, "phone", candidate.getPhone(), 0.4, "candidate_profile");
+        putField(fields, "email", candidate.getEmail(), 0.4, "candidate_profile");
+        putField(fields, "location", candidate.getLocation(), 0.4, "candidate_profile");
+        putField(fields, "education", candidate.getEducation(), 0.4, "candidate_profile");
+        putField(fields, "experience", candidate.getExperience(), 0.4, "candidate_profile");
+        List<String> skills = splitItems(candidate.getSkillsSummary());
+        List<ParseProjectResponse> projects = splitItems(candidate.getProjectSummary()).stream()
+                .map(item -> new ParseProjectResponse("项目经历", item))
+                .toList();
+        return new ParseReportResponse(
+                "当前尚无新的解析结果，先使用候选人已录入信息作为辅助决策上下文。",
+                List.of("使用候选人已有资料作为兜底输入"),
+                skills,
+                projects,
+                fields,
+                List.of(new ParseIssueResponse("INFO", "建议先执行一次简历解析，以获得更完整的结构化结果"))
+        );
+    }
+
     private AgentJobResponse toResponse(AgentJob job) {
         AgentResultResponse resultResponse = agentResultRepository.findByJobId(job.getId())
-                .map(result -> new AgentResultResponse(
-                        result.getSummary(),
-                        result.getOverallScore(),
-                        readMap(result.getDimensionScoresJson()),
-                        result.getStrengths(),
-                        result.getRisks(),
-                        result.getRecommendedAction(),
-                        result.getRawReasoningDigest(),
-                        new ParsedCandidateDraftResponse(
-                                result.getParsedName(),
-                                result.getParsedPhone(),
-                                result.getParsedEmail(),
-                                result.getParsedEducation(),
-                                result.getParsedExperience(),
-                                result.getParsedSkillsSummary(),
-                                result.getParsedProjectSummary()
-                        )
-                ))
+                .map(result -> {
+                    ParseReportResponse parseReport = readParseReport(result);
+                    DecisionReportResponse decisionReport = readDecisionReport(result);
+                    return new AgentResultResponse(
+                            result.getSummary(),
+                            result.getOverallScore(),
+                            readMap(result.getDimensionScoresJson()),
+                            result.getStrengths(),
+                            result.getRisks(),
+                            result.getRecommendedAction(),
+                            result.getRawReasoningDigest(),
+                            buildParsedDraft(result, parseReport),
+                            parseReport,
+                            decisionReport
+                    );
+                })
                 .orElse(null);
         return new AgentJobResponse(
                 job.getId(),
@@ -187,6 +343,144 @@ public class AgentService {
         );
     }
 
+    private ParsedCandidateDraftResponse buildParsedDraft(AgentResult result, ParseReportResponse parseReport) {
+        return new ParsedCandidateDraftResponse(
+                fieldValue(parseReport, "name", result.getParsedName()),
+                fieldValue(parseReport, "phone", result.getParsedPhone()),
+                fieldValue(parseReport, "email", result.getParsedEmail()),
+                fieldValue(parseReport, "location", result.getParsedLocation()),
+                fieldValue(parseReport, "education", result.getParsedEducation()),
+                fieldValue(parseReport, "experience", result.getParsedExperience()),
+                fieldValue(parseReport, "skillsSummary", result.getParsedSkillsSummary()),
+                fieldValue(parseReport, "projectSummary", result.getParsedProjectSummary())
+        );
+    }
+
+    private ParseReportResponse readParseReport(AgentResult result) {
+        if (result.getParseReportJson() != null && !result.getParseReportJson().isBlank()) {
+            return readValue(result.getParseReportJson(), ParseReportResponse.class);
+        }
+        Map<String, ParseFieldValueResponse> fields = new LinkedHashMap<>();
+        putField(fields, "name", result.getParsedName(), 0.35, "legacy_result");
+        putField(fields, "phone", result.getParsedPhone(), 0.35, "legacy_result");
+        putField(fields, "email", result.getParsedEmail(), 0.35, "legacy_result");
+        putField(fields, "location", result.getParsedLocation(), 0.35, "legacy_result");
+        putField(fields, "education", result.getParsedEducation(), 0.35, "legacy_result");
+        putField(fields, "experience", result.getParsedExperience(), 0.35, "legacy_result");
+        putField(fields, "skillsSummary", result.getParsedSkillsSummary(), 0.35, "legacy_result");
+        putField(fields, "projectSummary", result.getParsedProjectSummary(), 0.35, "legacy_result");
+        if (fields.isEmpty()) {
+            return null;
+        }
+        return new ParseReportResponse(
+                firstNonBlank(result.getSummary(), "已读取历史解析结果"),
+                List.of("从历史字段回填结构化解析结果"),
+                splitItems(result.getParsedSkillsSummary()),
+                splitItems(result.getParsedProjectSummary()).stream()
+                        .map(item -> new ParseProjectResponse("项目经历", item))
+                        .toList(),
+                fields,
+                List.of()
+        );
+    }
+
+    private DecisionReportResponse readDecisionReport(AgentResult result) {
+        if (result.getDecisionReportJson() != null && !result.getDecisionReportJson().isBlank()) {
+            return readValue(result.getDecisionReportJson(), DecisionReportResponse.class);
+        }
+        if (result.getSummary() == null && result.getRecommendedAction() == null) {
+            return null;
+        }
+        return new DecisionReportResponse(
+                firstNonBlank(result.getSummary(), "已生成辅助决策结论"),
+                result.getOverallScore(),
+                scoreToLevel(result.getOverallScore()),
+                result.getRecommendedAction(),
+                splitText(result.getStrengths()),
+                splitText(result.getRisks()),
+                List.of(),
+                List.of(),
+                result.getRawReasoningDigest()
+        );
+    }
+
+    private void applyLegacyParsedDraft(AgentResult result, AgentCallbackRequest request) {
+        result.setParsedName(firstNonBlank(request.parsedName(), result.getParsedName()));
+        result.setParsedPhone(firstNonBlank(request.parsedPhone(), result.getParsedPhone()));
+        result.setParsedEmail(firstNonBlank(request.parsedEmail(), result.getParsedEmail()));
+        result.setParsedLocation(firstNonBlank(request.parsedLocation(), result.getParsedLocation()));
+        result.setParsedEducation(firstNonBlank(request.parsedEducation(), result.getParsedEducation()));
+        result.setParsedExperience(firstNonBlank(request.parsedExperience(), result.getParsedExperience()));
+        result.setParsedSkillsSummary(firstNonBlank(request.parsedSkillsSummary(), result.getParsedSkillsSummary()));
+        result.setParsedProjectSummary(firstNonBlank(request.parsedProjectSummary(), result.getParsedProjectSummary()));
+    }
+
+    private void applyParseReportDraft(AgentResult result, ParseReportResponse parseReport) {
+        result.setParsedName(fieldValue(parseReport, "name", result.getParsedName()));
+        result.setParsedPhone(fieldValue(parseReport, "phone", result.getParsedPhone()));
+        result.setParsedEmail(fieldValue(parseReport, "email", result.getParsedEmail()));
+        result.setParsedLocation(fieldValue(parseReport, "location", result.getParsedLocation()));
+        result.setParsedEducation(fieldValue(parseReport, "education", result.getParsedEducation()));
+        result.setParsedExperience(fieldValue(parseReport, "experience", result.getParsedExperience()));
+        result.setParsedSkillsSummary(fieldValue(parseReport, "skillsSummary", result.getParsedSkillsSummary()));
+        result.setParsedProjectSummary(fieldValue(parseReport, "projectSummary", result.getParsedProjectSummary()));
+    }
+
+    private String fieldValue(ParseReportResponse parseReport, String key, String fallback) {
+        if (parseReport == null || parseReport.fields() == null) {
+            return fallback;
+        }
+        ParseFieldValueResponse value = parseReport.fields().get(key);
+        if (value == null || value.value() == null || value.value().isBlank()) {
+            return fallback;
+        }
+        return value.value();
+    }
+
+    private void putField(Map<String, ParseFieldValueResponse> fields, String key, String value, double confidence, String source) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        fields.put(key, new ParseFieldValueResponse(value, confidence, source));
+    }
+
+    private List<String> splitItems(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(value.split("[,，;；\\n]"))
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private List<String> splitText(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(value.split("[；;\\n]"))
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .toList();
+    }
+
+    private String scoreToLevel(Integer score) {
+        if (score == null) {
+            return "待判断";
+        }
+        if (score >= 85) {
+            return "强烈推荐";
+        }
+        if (score >= 70) {
+            return "建议推进";
+        }
+        if (score >= 55) {
+            return "保守推进";
+        }
+        return "暂缓";
+    }
+
     private String write(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -197,10 +491,36 @@ public class AgentService {
 
     private Map<String, Integer> readMap(String value) {
         try {
-            return value == null ? Map.of() : objectMapper.readValue(value, new TypeReference<>() {
+            return value == null || value.isBlank() ? Map.of() : objectMapper.readValue(value, new TypeReference<>() {
             });
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Failed to read analysis result", exception);
         }
+    }
+
+    private <T> T readValue(String value, Class<T> type) {
+        try {
+            return objectMapper.readValue(value, type);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Failed to deserialize stored agent result", exception);
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private Integer firstNonNull(Integer... values) {
+        for (Integer value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 }
