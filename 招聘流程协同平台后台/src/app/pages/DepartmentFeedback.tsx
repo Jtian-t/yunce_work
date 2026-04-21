@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, CheckCircle, Download, FileSearch, Loader2, XCircle } from "lucide-react";
-import { useData, type CandidateDetail } from "../context/DataContext";
+import { useData, type CandidateDetail, type LookupUser } from "../context/DataContext";
 
 export function DepartmentFeedback() {
   const { id } = useParams();
   const navigate = useNavigate();
   const {
     loadCandidateDetail,
+    loadUsersByRole,
     submitDepartmentFeedback,
     getDepartmentTaskByCandidateId,
     downloadResume,
@@ -22,10 +23,12 @@ export function DepartmentFeedback() {
   const [scheduleInterview, setScheduleInterview] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [rejectReason, setRejectReason] = useState("");
-  const [interviewer, setInterviewer] = useState("");
+  const [interviewers, setInterviewers] = useState<LookupUser[]>([]);
+  const [suggestedInterviewerId, setSuggestedInterviewerId] = useState<number | "">("");
 
   const candidateId = Number(id);
   const task = Number.isNaN(candidateId) ? undefined : getDepartmentTaskByCandidateId(candidateId);
+  const suggestedInterviewer = interviewers.find((item) => item.id === Number(suggestedInterviewerId));
 
   useEffect(() => {
     if (!id || Number.isNaN(candidateId)) {
@@ -55,10 +58,22 @@ export function DepartmentFeedback() {
         }
       });
 
+    loadUsersByRole("INTERVIEWER")
+      .then((items) => {
+        if (active) {
+          setInterviewers(items);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setInterviewers([]);
+        }
+      });
+
     return () => {
       active = false;
     };
-  }, [id, candidateId, loadCandidateDetail]);
+  }, [id, candidateId, loadCandidateDetail, loadUsersByRole]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -79,7 +94,9 @@ export function DepartmentFeedback() {
         feedback,
         rejectReason: passed ? undefined : rejectReason,
         nextStep: passed ? (scheduleInterview ? "安排一面" : "待安排面试") : "-",
-        suggestedInterviewer: passed && scheduleInterview ? interviewer : undefined,
+        suggestedInterviewer: passed && scheduleInterview ? suggestedInterviewer?.displayName : undefined,
+        suggestedInterviewerId: passed && scheduleInterview && suggestedInterviewer ? suggestedInterviewer.id : undefined,
+        suggestedInterviewerName: passed && scheduleInterview ? suggestedInterviewer?.displayName : undefined,
       });
       navigate("/dept");
     } catch (requestError) {
@@ -109,7 +126,7 @@ export function DepartmentFeedback() {
   }
 
   const skills = candidate.skillsSummary
-    ? candidate.skillsSummary.split(/[,，]/).map((item) => item.trim()).filter(Boolean)
+    ? candidate.skillsSummary.split(/[,，、]/).map((item) => item.trim()).filter(Boolean)
     : [];
   const projects = candidate.projectSummary
     ? candidate.projectSummary.split(/\n|；|;/).map((item) => item.trim()).filter(Boolean)
@@ -127,7 +144,7 @@ export function DepartmentFeedback() {
       <div className="rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 p-8 text-white shadow-lg">
         <h1 className="text-2xl font-bold">候选人简历筛选</h1>
         <p className="mt-2 text-sm text-blue-100">
-          当前任务：{task ? `${task.department} / ${task.reviewer}` : "未加载到待办信息"}，请基于真实后端数据提交反馈。
+          当前任务：{task ? `${task.department} / ${task.reviewer}` : "未加载到待办信息"}，请结合候选人信息提交部门反馈。
         </p>
       </div>
 
@@ -266,12 +283,19 @@ export function DepartmentFeedback() {
             {scheduleInterview && (
               <label className="block text-sm text-gray-700">
                 推荐面试官
-                <input
-                  value={interviewer}
-                  onChange={(event) => setInterviewer(event.target.value)}
-                  placeholder="例如：刘洋 - 技术经理"
+                <select
+                  value={suggestedInterviewerId}
+                  onChange={(event) => setSuggestedInterviewerId(event.target.value ? Number(event.target.value) : "")}
                   className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5"
-                />
+                >
+                  <option value="">选择面试官</option>
+                  {interviewers.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.displayName}
+                      {item.departmentName ? ` - ${item.departmentName}` : ""}
+                    </option>
+                  ))}
+                </select>
               </label>
             )}
           </div>

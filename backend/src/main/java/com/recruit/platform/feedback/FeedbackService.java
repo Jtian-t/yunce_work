@@ -46,6 +46,8 @@ public class FeedbackService {
         feedback.setRejectReason(request.rejectReason());
         feedback.setNextStep(request.nextStep());
         feedback.setSuggestedInterviewer(request.suggestedInterviewer());
+        feedback.setSuggestedInterviewerId(request.suggestedInterviewerId());
+        feedback.setSuggestedInterviewerName(request.suggestedInterviewerName());
         DepartmentFeedback saved = feedbackRepository.save(feedback);
 
         workflowService.markCompleted(assignment);
@@ -85,6 +87,8 @@ public class FeedbackService {
                 feedback.getRejectReason(),
                 feedback.getNextStep(),
                 feedback.getSuggestedInterviewer(),
+                feedback.getSuggestedInterviewerId(),
+                feedback.getSuggestedInterviewerName(),
                 feedback.getCreatedAt()
         );
     }

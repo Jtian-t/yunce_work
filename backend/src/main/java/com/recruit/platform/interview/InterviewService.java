@@ -5,6 +5,7 @@ import com.recruit.platform.candidate.CandidateService;
 import com.recruit.platform.common.ForbiddenException;
 import com.recruit.platform.common.NotFoundException;
 import com.recruit.platform.common.enums.CandidateStatus;
+import com.recruit.platform.common.enums.EmploymentStatus;
 import com.recruit.platform.common.enums.InterviewMeetingType;
 import com.recruit.platform.common.enums.InterviewPlanStatus;
 import com.recruit.platform.common.enums.InterviewResult;
@@ -18,6 +19,7 @@ import com.recruit.platform.user.User;
 import com.recruit.platform.user.UserRepository;
 import com.recruit.platform.workflow.WorkflowService;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -44,6 +46,9 @@ public class InterviewService {
         Candidate candidate = candidateService.getEntity(request.candidateId());
         User interviewer = userRepository.findById(request.interviewerId())
                 .orElseThrow(() -> new NotFoundException("Interviewer not found"));
+        if (!interviewer.isEnabled() || interviewer.getEmploymentStatus() != EmploymentStatus.ACTIVE || !interviewer.isCanInterview()) {
+            throw new ForbiddenException("Selected interviewer is not available");
+        }
         User actor = currentUserService.getRequiredUser();
 
         InterviewPlan plan = new InterviewPlan();
@@ -69,18 +74,25 @@ public class InterviewService {
                 "已安排 " + interviewer.getDisplayName() + " 进行 " + request.roundLabel());
         candidate.setNextAction("等待" + request.roundLabel() + "结果");
 
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("candidateId", candidate.getId());
+        payload.put("candidateName", candidate.getName());
+        payload.put("position", candidate.getPosition());
+        payload.put("interviewId", saved.getId());
+        payload.put("departmentId", saved.getDepartment() == null ? null : saved.getDepartment().getId());
+        payload.put("departmentName", saved.getDepartment() == null ? null : saved.getDepartment().getName());
+        payload.put("interviewerId", interviewer.getId());
+        payload.put("interviewerName", interviewer.getDisplayName());
+        payload.put("roundLabel", request.roundLabel());
+        payload.put("scheduledAt", request.scheduledAt().toString());
+        payload.put("meetingUrl", firstNonBlank(request.meetingUrl(), ""));
+        payload.put("interviewStageCode", firstNonBlank(request.interviewStageCode(), defaultStageCode(request.roundLabel())));
+        payload.put("interviewStageLabel", firstNonBlank(request.interviewStageLabel(), request.roundLabel()));
+
         notificationService.create(interviewer, NotificationType.INTERVIEW_ASSIGNED,
                 "收到新的面试安排",
-                candidate.getName() + " 的 " + request.roundLabel() + " 已安排给您。",
-                Map.of(
-                        "candidateId", candidate.getId(),
-                        "candidateName", candidate.getName(),
-                        "position", candidate.getPosition(),
-                        "interviewId", saved.getId(),
-                        "roundLabel", request.roundLabel(),
-                        "scheduledAt", request.scheduledAt().toString(),
-                        "meetingUrl", firstNonBlank(request.meetingUrl(), "")
-                ));
+                candidate.getName() + " 的" + request.roundLabel() + "已安排给您。",
+                payload);
         return toPlanResponse(saved);
     }
 
@@ -156,15 +168,13 @@ public class InterviewService {
                 .toList();
     }
 
-    public List<InterviewPlanResponse> listMine() {
+    public List<InterviewPlanResponse> listMine(String scope, Long departmentId, Long userId) {
         User actor = currentUserService.getRequiredUser();
-        currentUserService.requireAnyRole(RoleType.INTERVIEWER, RoleType.HR, RoleType.ADMIN);
-        if (currentUserService.hasAnyRole(RoleType.HR, RoleType.ADMIN)) {
-            return interviewPlanRepository.findAllByOrderByScheduledAtAsc().stream()
-                    .map(this::toPlanResponse)
-                    .toList();
-        }
-        return interviewPlanRepository.findByInterviewerIdOrderByScheduledAtAsc(actor.getId()).stream()
+        currentUserService.requireAnyRole(RoleType.INTERVIEWER, RoleType.DEPARTMENT_LEAD, RoleType.HR, RoleType.ADMIN);
+        String normalizedScope = normalizeScope(scope);
+
+        return interviewPlanRepository.findAllByOrderByScheduledAtAsc().stream()
+                .filter(plan -> matchesScope(plan, actor, normalizedScope, departmentId, userId))
                 .map(this::toPlanResponse)
                 .toList();
     }
@@ -175,10 +185,8 @@ public class InterviewService {
             return false;
         }
         for (InterviewPlan plan : plans) {
-            boolean hasEvaluation = !interviewEvaluationRepository.findByCandidateIdOrderByCreatedAtDesc(candidateId).stream()
-                    .filter(evaluation -> evaluation.getInterviewPlan().getId().equals(plan.getId()))
-                    .toList()
-                    .isEmpty();
+            boolean hasEvaluation = interviewEvaluationRepository.findByCandidateIdOrderByCreatedAtDesc(candidateId).stream()
+                    .anyMatch(evaluation -> evaluation.getInterviewPlan().getId().equals(plan.getId()));
             if (plan.getStatus() != InterviewPlanStatus.COMPLETED || !hasEvaluation) {
                 return true;
             }
@@ -196,6 +204,7 @@ public class InterviewService {
                 plan.getId(),
                 plan.getCandidate().getId(),
                 plan.getRoundLabel(),
+                plan.getInterviewer().getId(),
                 plan.getInterviewer().getDisplayName(),
                 plan.getCandidate().getName(),
                 plan.getCandidate().getPosition(),
@@ -229,6 +238,34 @@ public class InterviewService {
                 evaluation.getSuggestion(),
                 evaluation.getCreatedAt()
         );
+    }
+
+    private boolean matchesScope(InterviewPlan plan, User actor, String scope, Long departmentId, Long userId) {
+        if (currentUserService.hasAnyRole(RoleType.INTERVIEWER)
+                && !currentUserService.hasAnyRole(RoleType.HR, RoleType.ADMIN, RoleType.DEPARTMENT_LEAD)) {
+            return plan.getInterviewer().getId().equals(actor.getId());
+        }
+
+        if ("department".equals(scope)) {
+            if (currentUserService.hasAnyRole(RoleType.DEPARTMENT_LEAD)
+                    && !currentUserService.hasAnyRole(RoleType.HR, RoleType.ADMIN)) {
+                Long actorDepartmentId = actor.getDepartment() == null ? null : actor.getDepartment().getId();
+                if (actorDepartmentId == null) {
+                    return false;
+                }
+                if (plan.getDepartment() == null || !actorDepartmentId.equals(plan.getDepartment().getId())) {
+                    return false;
+                }
+                return userId == null || plan.getInterviewer().getId().equals(userId);
+            }
+
+            if (departmentId != null && (plan.getDepartment() == null || !departmentId.equals(plan.getDepartment().getId()))) {
+                return false;
+            }
+            return userId == null || plan.getInterviewer().getId().equals(userId);
+        }
+
+        return plan.getInterviewer().getId().equals(actor.getId());
     }
 
     private Department resolveDepartment(Long requestDepartmentId, Candidate candidate) {
@@ -287,5 +324,12 @@ public class InterviewService {
         return plan.getInterviewStageLabel() == null || plan.getInterviewStageLabel().isBlank()
                 ? plan.getRoundLabel()
                 : plan.getInterviewStageLabel();
+    }
+
+    private String normalizeScope(String scope) {
+        if ("department".equalsIgnoreCase(scope)) {
+            return "department";
+        }
+        return "my";
     }
 }

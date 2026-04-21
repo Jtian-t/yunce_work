@@ -119,6 +119,8 @@ export interface CandidateFeedback {
   rejectReason?: string | null;
   nextStep?: string | null;
   suggestedInterviewer?: string | null;
+  suggestedInterviewerId?: number | null;
+  suggestedInterviewerName?: string | null;
   createdAt: string;
 }
 
@@ -138,6 +140,7 @@ export interface InterviewPlan {
   id: number;
   candidateId: number;
   roundLabel: string;
+  interviewerId?: number | null;
   interviewer: string;
   candidateName?: string;
   position?: string;
@@ -181,6 +184,22 @@ export interface LookupUser {
   email: string;
   departmentId: number | null;
   departmentName: string | null;
+  canInterview?: boolean;
+  employmentStatus?: string | null;
+  displayOrder?: number | null;
+  roles?: string[];
+}
+
+export interface DepartmentMember extends LookupUser {}
+
+export interface InterviewQuery {
+  scope?: "my" | "department";
+  departmentId?: number;
+  userId?: number;
+}
+
+export interface NotificationQuery extends InterviewQuery {
+  type?: string;
 }
 
 export interface ParsedCandidateDraft {
@@ -335,7 +354,7 @@ interface DataContextType {
   loadCandidateTimeline: (id: number) => Promise<TimelineEvent[]>;
   loadCandidateFeedbacks: (id: number) => Promise<CandidateFeedback[]>;
   loadCandidateInterviews: (id: number) => Promise<InterviewPlan[]>;
-  loadMyInterviews: () => Promise<InterviewPlan[]>;
+  loadMyInterviews: (query?: InterviewQuery) => Promise<InterviewPlan[]>;
   createCandidate: (payload: CandidateUpsertPayload) => Promise<CandidateDetail>;
   updateCandidate: (id: number, payload: CandidateUpsertPayload) => Promise<CandidateDetail>;
   uploadResume: (candidateId: number, file: File) => Promise<void>;
@@ -362,6 +381,7 @@ interface DataContextType {
   ) => Promise<void>;
   advanceCandidate: (candidateId: number, payload: AdvanceCandidatePayload) => Promise<CandidateDetail>;
   loadDepartments: () => Promise<LookupDepartment[]>;
+  loadDepartmentMembers: (departmentId: number) => Promise<DepartmentMember[]>;
   loadUsersByRole: (role: "DEPARTMENT_LEAD" | "INTERVIEWER", departmentId?: number) => Promise<LookupUser[]>;
   submitDepartmentFeedback: (params: {
     candidateId: number;
@@ -370,12 +390,14 @@ interface DataContextType {
     rejectReason?: string;
     nextStep?: string;
     suggestedInterviewer?: string;
+    suggestedInterviewerId?: number;
+    suggestedInterviewerName?: string;
   }) => Promise<void>;
   getCandidateById: (id: number) => Candidate | undefined;
   getDepartmentTaskByCandidateId: (candidateId: number) => DepartmentTask | undefined;
   downloadResume: (candidateId: number, fileName?: string) => Promise<void>;
   previewResume: (candidateId: number) => Promise<void>;
-  loadNotifications: () => Promise<NotificationItem[]>;
+  loadNotifications: (query?: NotificationQuery) => Promise<NotificationItem[]>;
   markNotificationRead: (id: number) => Promise<NotificationItem>;
 }
 
@@ -442,6 +464,7 @@ function mapInterviewPlan(plan: any): InterviewPlan {
     id: plan.id,
     candidateId: plan.candidateId,
     roundLabel: plan.roundLabel,
+    interviewerId: plan.interviewerId ?? null,
     interviewer: plan.interviewer,
     candidateName: plan.candidateName ?? undefined,
     position: plan.position ?? undefined,
@@ -651,8 +674,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return plans.map(mapInterviewPlan);
   }
 
-  async function loadMyInterviews() {
-    const plans = await apiRequest<any[]>("/api/interviews/mine");
+  async function loadMyInterviews(query?: InterviewQuery) {
+    const params = new URLSearchParams();
+    if (query?.scope) {
+      params.set("scope", query.scope);
+    }
+    if (typeof query?.departmentId === "number") {
+      params.set("departmentId", String(query.departmentId));
+    }
+    if (typeof query?.userId === "number") {
+      params.set("userId", String(query.userId));
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const plans = await apiRequest<any[]>(`/api/interviews/mine${suffix}`);
     return plans.map(mapInterviewPlan);
   }
 
@@ -768,6 +802,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return apiRequest<LookupDepartment[]>("/api/lookups/departments");
   }
 
+  async function loadDepartmentMembers(departmentId: number) {
+    return apiRequest<DepartmentMember[]>(`/api/lookups/department-members?departmentId=${departmentId}`);
+  }
+
   async function loadUsersByRole(role: "DEPARTMENT_LEAD" | "INTERVIEWER", departmentId?: number) {
     const params = new URLSearchParams({ role });
     if (typeof departmentId === "number") {
@@ -783,6 +821,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     rejectReason?: string;
     nextStep?: string;
     suggestedInterviewer?: string;
+    suggestedInterviewerId?: number;
+    suggestedInterviewerName?: string;
   }) {
     const assignment = departmentTasks.find((task) => task.candidateId === params.candidateId);
     if (!assignment) {
@@ -798,6 +838,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         rejectReason: params.rejectReason,
         nextStep: params.nextStep,
         suggestedInterviewer: params.suggestedInterviewer,
+        suggestedInterviewerId: params.suggestedInterviewerId,
+        suggestedInterviewerName: params.suggestedInterviewerName,
       }),
     });
 
@@ -848,9 +890,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function loadNotifications() {
-    const items = await apiRequest<NotificationItem[]>("/api/notifications");
-    setNotifications(items);
+  async function loadNotifications(query?: NotificationQuery) {
+    const params = new URLSearchParams();
+    if (query?.scope) {
+      params.set("scope", query.scope);
+    }
+    if (typeof query?.departmentId === "number") {
+      params.set("departmentId", String(query.departmentId));
+    }
+    if (typeof query?.userId === "number") {
+      params.set("userId", String(query.userId));
+    }
+    if (query?.type) {
+      params.set("type", query.type);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const items = await apiRequest<NotificationItem[]>(`/api/notifications${suffix}`);
+    if (!query || query.scope !== "department") {
+      setNotifications(items);
+    }
     return items;
   }
 
@@ -900,6 +958,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       saveManualParsedFields,
       advanceCandidate,
       loadDepartments,
+      loadDepartmentMembers,
       loadUsersByRole,
       submitDepartmentFeedback,
       getCandidateById,

@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -34,7 +35,11 @@ public class InterviewController {
     }
 
     @GetMapping("/api/interviews/mine")
-    List<InterviewPlanResponse> listMine() {
-        return interviewService.listMine();
+    List<InterviewPlanResponse> listMine(
+            @RequestParam(defaultValue = "my") String scope,
+            @RequestParam(required = false) Long departmentId,
+            @RequestParam(required = false) Long userId
+    ) {
+        return interviewService.listMine(scope, departmentId, userId);
     }
 }

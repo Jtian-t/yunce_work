@@ -44,4 +44,8 @@ public class DepartmentFeedback extends BaseEntity {
     private String nextStep;
 
     private String suggestedInterviewer;
+
+    private Long suggestedInterviewerId;
+
+    private String suggestedInterviewerName;
 }

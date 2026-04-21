@@ -3,8 +3,10 @@ package com.recruit.platform.notification;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.recruit.platform.common.ForbiddenException;
 import com.recruit.platform.common.NotFoundException;
 import com.recruit.platform.common.enums.NotificationType;
+import com.recruit.platform.common.enums.RoleType;
 import com.recruit.platform.security.CurrentUserService;
 import com.recruit.platform.user.User;
 import java.util.List;
@@ -38,9 +40,17 @@ public class NotificationService {
         notificationRepository.save(notification);
     }
 
-    public List<NotificationResponse> listMine() {
-        Long recipientId = currentUserService.getRequiredUser().getId();
-        return notificationRepository.findTop50ByRecipientIdOrderByCreatedAtDesc(recipientId).stream()
+    public List<NotificationResponse> listMine(String scope, Long departmentId, Long userId, NotificationType type) {
+        User actor = currentUserService.getRequiredUser();
+        currentUserService.requireAnyRole(RoleType.INTERVIEWER, RoleType.DEPARTMENT_LEAD, RoleType.HR, RoleType.ADMIN);
+        String normalizedScope = "department".equalsIgnoreCase(scope) ? "department" : "my";
+        List<Notification> source = "department".equals(normalizedScope)
+                ? notificationRepository.findTop200ByOrderByCreatedAtDesc()
+                : notificationRepository.findTop50ByRecipientIdOrderByCreatedAtDesc(actor.getId());
+
+        return source.stream()
+                .filter(notification -> matchesScope(notification, actor, normalizedScope, departmentId, userId))
+                .filter(notification -> type == null || notification.getType() == type)
                 .map(this::toResponse)
                 .toList();
     }
@@ -84,5 +94,54 @@ public class NotificationService {
         } catch (JsonProcessingException exception) {
             return Map.of();
         }
+    }
+
+    private boolean matchesScope(Notification notification, User actor, String scope, Long departmentId, Long userId) {
+        if (!"department".equals(scope)) {
+            return notification.getRecipient().getId().equals(actor.getId());
+        }
+
+        if (currentUserService.hasAnyRole(RoleType.INTERVIEWER)
+                && !currentUserService.hasAnyRole(RoleType.HR, RoleType.ADMIN, RoleType.DEPARTMENT_LEAD)) {
+            return notification.getRecipient().getId().equals(actor.getId());
+        }
+
+        Map<String, Object> payload = readPayload(notification.getPayloadJson());
+        Long payloadDepartmentId = readLong(payload.get("departmentId"));
+        Long payloadInterviewerId = readLong(payload.get("interviewerId"));
+
+        if (currentUserService.hasAnyRole(RoleType.DEPARTMENT_LEAD)
+                && !currentUserService.hasAnyRole(RoleType.HR, RoleType.ADMIN)) {
+            Long actorDepartmentId = actor.getDepartment() == null ? null : actor.getDepartment().getId();
+            if (actorDepartmentId == null) {
+                throw new ForbiddenException("Current user is not bound to a department");
+            }
+            if (!actorDepartmentId.equals(payloadDepartmentId)) {
+                return false;
+            }
+            return userId == null || userId.equals(payloadInterviewerId) || userId.equals(notification.getRecipient().getId());
+        }
+
+        if (departmentId != null && !departmentId.equals(payloadDepartmentId)) {
+            return false;
+        }
+        if (userId != null && !userId.equals(payloadInterviewerId) && !userId.equals(notification.getRecipient().getId())) {
+            return false;
+        }
+        return true;
+    }
+
+    private Long readLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 }

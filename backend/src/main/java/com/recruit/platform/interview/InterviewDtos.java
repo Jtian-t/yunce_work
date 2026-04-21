@@ -40,6 +40,7 @@ record InterviewPlanResponse(
         Long id,
         Long candidateId,
         String roundLabel,
+        Long interviewerId,
         String interviewer,
         String candidateName,
         String position,

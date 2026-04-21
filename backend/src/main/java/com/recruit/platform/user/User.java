@@ -1,6 +1,7 @@
 package com.recruit.platform.user;
 
 import com.recruit.platform.common.BaseEntity;
+import com.recruit.platform.common.enums.EmploymentStatus;
 import com.recruit.platform.common.enums.RoleType;
 import com.recruit.platform.department.Department;
 import jakarta.persistence.CollectionTable;
@@ -46,4 +47,14 @@ public class User extends BaseEntity {
 
     @Column(nullable = false)
     private boolean enabled = true;
+
+    @Column(nullable = false)
+    private boolean canInterview = false;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32)
+    private EmploymentStatus employmentStatus = EmploymentStatus.ACTIVE;
+
+    @Column(nullable = false)
+    private Integer displayOrder = 0;
 }

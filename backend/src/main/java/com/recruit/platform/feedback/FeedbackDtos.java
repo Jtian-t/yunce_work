@@ -10,7 +10,9 @@ record SubmitFeedbackRequest(
         @NotBlank String feedback,
         String rejectReason,
         String nextStep,
-        String suggestedInterviewer
+        String suggestedInterviewer,
+        Long suggestedInterviewerId,
+        String suggestedInterviewerName
 ) {
 }
 
@@ -24,6 +26,8 @@ record FeedbackResponse(
         String rejectReason,
         String nextStep,
         String suggestedInterviewer,
+        Long suggestedInterviewerId,
+        String suggestedInterviewerName,
         OffsetDateTime createdAt
 ) {
 }

@@ -213,6 +213,15 @@ export function CandidateDetail() {
     const scopedInterviewers = interviewers.filter((item) => item.departmentId === candidateDepartmentId);
     return scopedInterviewers.length > 0 ? scopedInterviewers : interviewers;
   }, [candidateDepartmentId, interviewers]);
+  const latestSuggestedInterviewer = useMemo(
+    () =>
+      feedbacks.find(
+        (item) =>
+          item.decision === "PASS" &&
+          (item.suggestedInterviewerId != null || (item.suggestedInterviewerName ?? item.suggestedInterviewer))
+      ) ?? null,
+    [feedbacks]
+  );
 
   useEffect(() => {
     if (candidateDepartmentId == null) {
@@ -232,6 +241,18 @@ export function CandidateDetail() {
       active = false;
     };
   }, [candidateDepartmentId, loadUsersByRole]);
+
+  useEffect(() => {
+    if (!latestSuggestedInterviewer || interviewerId) {
+      return;
+    }
+    if (latestSuggestedInterviewer.suggestedInterviewerId != null) {
+      const matched = visibleInterviewers.find((item) => item.id === latestSuggestedInterviewer.suggestedInterviewerId);
+      if (matched) {
+        setInterviewerId(matched.id);
+      }
+    }
+  }, [interviewerId, latestSuggestedInterviewer, visibleInterviewers]);
 
   const skillList = parseReport?.extractedSkills?.length
     ? parseReport.extractedSkills
@@ -709,6 +730,15 @@ export function CandidateDetail() {
               {(candidate.statusCode === "NEW" || candidate.statusCode === "TIMEOUT" || candidate.statusCode === "IN_DEPT_REVIEW") && (
                 <div className="rounded-xl border border-gray-200 p-4">
                   <div className="mb-3 font-medium text-gray-900">分发或退回简历池</div>
+                  {latestSuggestedInterviewer && (
+                    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      部门建议面试官：
+                      {latestSuggestedInterviewer.suggestedInterviewerName ??
+                        latestSuggestedInterviewer.suggestedInterviewer ??
+                        "未指定"}
+                      。最终通知会发送给当前选中的面试官。
+                    </div>
+                  )}
                   <div className="grid gap-3 md:grid-cols-2">
                     <select
                       value={departmentId}
@@ -864,7 +894,7 @@ export function CandidateDetail() {
                         meetingPassword,
                         interviewStageCode: resolveInterviewStageCode(roundLabel),
                         interviewStageLabel: roundLabel,
-                        interviewDepartmentId: departmentId ? Number(departmentId) : undefined,
+                        interviewDepartmentId: candidateDepartmentId ?? undefined,
                         interviewNotes,
                       })
                     }
@@ -1009,6 +1039,11 @@ export function CandidateDetail() {
                       </span>
                     </div>
                     <p className="text-sm text-gray-700">{feedback.feedback}</p>
+                    {(feedback.suggestedInterviewerName ?? feedback.suggestedInterviewer) && (
+                      <div className="mt-2 text-sm text-amber-700">
+                        建议面试官：{feedback.suggestedInterviewerName ?? feedback.suggestedInterviewer}
+                      </div>
+                    )}
                     {feedback.nextStep && <div className="mt-2 text-sm font-medium text-blue-600">下一步：{feedback.nextStep}</div>}
                   </div>
                 ))
