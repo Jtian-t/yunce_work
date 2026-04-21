@@ -1,11 +1,13 @@
 package com.recruit.platform.lookup;
 
 import com.recruit.platform.common.enums.RoleType;
+import com.recruit.platform.department.Department;
 import com.recruit.platform.department.DepartmentRepository;
 import com.recruit.platform.security.CurrentUserService;
 import com.recruit.platform.user.UserRepository;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,10 +33,11 @@ public class LookupService {
                 .toList();
     }
 
-    public List<UserLookupResponse> users(RoleType role) {
+    public List<UserLookupResponse> users(RoleType role, Long departmentId) {
         currentUserService.requireAnyRole(RoleType.HR, RoleType.ADMIN);
         return userRepository.findAll().stream()
                 .filter(user -> user.getRoles().contains(role))
+                .filter(user -> departmentId == null || (user.getDepartment() != null && user.getDepartment().getId().equals(departmentId)))
                 .sorted(Comparator.comparing(user -> user.getDisplayName().toLowerCase()))
                 .map(user -> new UserLookupResponse(
                         user.getId(),

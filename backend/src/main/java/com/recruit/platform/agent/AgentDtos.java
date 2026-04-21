@@ -2,10 +2,12 @@ package com.recruit.platform.agent;
 
 import com.recruit.platform.common.enums.AgentJobStatus;
 import com.recruit.platform.common.enums.AgentJobType;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 record CreateAnalysisJobRequest(
         String jdSummary
@@ -68,13 +70,62 @@ record ParseProjectResponse(
 ) {
 }
 
+record ParseSkillResponse(
+        String rawTerm,
+        String normalizedName,
+        String sourceSnippet,
+        Double confidence
+) {
+}
+
+record ParseProjectDetailResponse(
+        String projectName,
+        String period,
+        String role,
+        List<String> techStack,
+        List<String> responsibilities,
+        List<String> achievements,
+        String summary
+) {
+}
+
+record ParseExperienceResponse(
+        String company,
+        String role,
+        String period,
+        String summary
+) {
+}
+
+record ParseEducationResponse(
+        String school,
+        String degree,
+        String period,
+        String summary
+) {
+}
+
+record ParseRawBlockResponse(
+        String blockType,
+        String title,
+        String content
+) {
+}
+
 record ParseReportResponse(
         String summary,
         List<String> highlights,
         List<String> extractedSkills,
         List<ParseProjectResponse> projectExperiences,
+        List<ParseSkillResponse> skills,
+        List<ParseProjectDetailResponse> projects,
+        List<ParseExperienceResponse> experiences,
+        List<ParseEducationResponse> educations,
+        List<ParseRawBlockResponse> rawBlocks,
         Map<String, ParseFieldValueResponse> fields,
-        List<ParseIssueResponse> issues
+        List<ParseIssueResponse> issues,
+        String extractionMode,
+        Boolean ocrRequired
 ) {
 }
 
@@ -123,5 +174,23 @@ record AgentCallbackRequest(
         ParseReportResponse parseReport,
         DecisionReportResponse decisionReport,
         String errorMessage
+) {
+}
+
+record ApplyParsedProfileRequest(
+        Set<String> fields
+) {
+}
+
+record ParsedProfileManualFieldsRequest(
+        String name,
+        String phone,
+        String email,
+        String location,
+        String education,
+        String experience,
+        String skillsSummary,
+        String projectSummary,
+        @NotBlank String lockReason
 ) {
 }

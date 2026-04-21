@@ -49,7 +49,10 @@ public class BootstrapDataLoader {
             User hr = user("hr", "李明", "hr@company.com", tech, Set.of(RoleType.HR));
             User techLead = user("techlead", "王总", "techlead@company.com", tech, Set.of(RoleType.DEPARTMENT_LEAD));
             User productLead = user("productlead", "张华", "productlead@company.com", product, Set.of(RoleType.DEPARTMENT_LEAD));
-            User interviewer = user("interviewer", "刘洋", "interviewer@company.com", tech, Set.of(RoleType.INTERVIEWER));
+            User techInterviewer = user("interviewer", "刘洋", "interviewer@company.com", tech, Set.of(RoleType.INTERVIEWER));
+            User techInterviewer2 = user("interviewer2", "周敏", "interviewer2@company.com", tech, Set.of(RoleType.INTERVIEWER));
+            User productInterviewer = user("productinterviewer", "宋佳", "productinterviewer@company.com", product, Set.of(RoleType.INTERVIEWER));
+            User designInterviewer = user("designinterviewer", "许然", "designinterviewer@company.com", design, Set.of(RoleType.INTERVIEWER));
 
             Candidate pendingCandidate = candidate("张伟", "前端工程师", techLead, tech, CandidateStatus.IN_DEPT_REVIEW, "等待部门反馈");
             Candidate interviewCandidate = candidate("王芳", "产品经理", productLead, product, CandidateStatus.INTERVIEWING, "等待面试结果");
@@ -76,13 +79,35 @@ public class BootstrapDataLoader {
 
             InterviewPlan interviewPlan = new InterviewPlan();
             interviewPlan.setCandidate(interviewCandidate);
-            interviewPlan.setInterviewer(interviewer);
+            interviewPlan.setInterviewer(techInterviewer);
             interviewPlan.setCreatedBy(hr);
+            interviewPlan.setOrganizer(hr);
+            interviewPlan.setInterviewStageCode("ROUND_1");
+            interviewPlan.setInterviewStageLabel("一面");
             interviewPlan.setRoundLabel("一面");
             interviewPlan.setScheduledAt(OffsetDateTime.now().plusHours(4));
             interviewPlan.setEndsAt(OffsetDateTime.now().plusHours(5));
+            interviewPlan.setMeetingType(com.recruit.platform.common.enums.InterviewMeetingType.TENCENT_MEETING);
+            interviewPlan.setMeetingUrl("https://meeting.tencent.com/mock");
+            interviewPlan.setDepartment(tech);
             interviewPlan.setStatus(InterviewPlanStatus.PLANNED);
             interviewPlanRepository.save(interviewPlan);
+
+            InterviewPlan interviewPlan2 = new InterviewPlan();
+            interviewPlan2.setCandidate(interviewCandidate);
+            interviewPlan2.setInterviewer(techInterviewer2);
+            interviewPlan2.setCreatedBy(hr);
+            interviewPlan2.setOrganizer(hr);
+            interviewPlan2.setInterviewStageCode("ROUND_2");
+            interviewPlan2.setInterviewStageLabel("二面");
+            interviewPlan2.setRoundLabel("二面");
+            interviewPlan2.setScheduledAt(OffsetDateTime.now().plusDays(1).plusHours(2));
+            interviewPlan2.setEndsAt(OffsetDateTime.now().plusDays(1).plusHours(3));
+            interviewPlan2.setMeetingType(com.recruit.platform.common.enums.InterviewMeetingType.TENCENT_MEETING);
+            interviewPlan2.setMeetingUrl("https://meeting.tencent.com/mock-2");
+            interviewPlan2.setDepartment(tech);
+            interviewPlan2.setStatus(InterviewPlanStatus.PLANNED);
+            interviewPlanRepository.save(interviewPlan2);
         };
     }
 

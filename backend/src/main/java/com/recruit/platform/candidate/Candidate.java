@@ -10,6 +10,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import java.time.LocalDate;
 import lombok.Getter;
@@ -62,4 +63,7 @@ public class Candidate extends BaseEntity {
 
     @Column(length = 5000)
     private String projectSummary;
+
+    @Lob
+    private String parsedFieldLocksJson;
 }

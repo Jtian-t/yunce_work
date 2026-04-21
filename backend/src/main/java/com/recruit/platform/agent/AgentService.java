@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -145,6 +146,76 @@ public class AgentService {
         return latestByType(candidateId, AgentJobType.DECISION);
     }
 
+    @Transactional
+    public void applyParsedProfile(Long candidateId, ApplyParsedProfileRequest request) {
+        currentUserService.requireAnyRole(RoleType.HR, RoleType.ADMIN);
+        Candidate candidate = candidateService.getEntity(candidateId);
+        ParseReportResponse parseReport = latestParseReport(candidateId)
+                .orElseThrow(() -> new NotFoundException("Parse report not found"));
+        Set<String> requested = request.fields() == null || request.fields().isEmpty()
+                ? Set.of("name", "phone", "email", "location", "education", "experience", "skillsSummary", "projectSummary")
+                : request.fields();
+        Set<String> locked = readLockedFields(candidate);
+
+        if (requested.contains("name") && !locked.contains("name")) {
+            candidate.setName(fieldValue(parseReport, "name", candidate.getName()));
+        }
+        if (requested.contains("phone") && !locked.contains("phone")) {
+            candidate.setPhone(fieldValue(parseReport, "phone", candidate.getPhone()));
+        }
+        if (requested.contains("email") && !locked.contains("email")) {
+            candidate.setEmail(fieldValue(parseReport, "email", candidate.getEmail()));
+        }
+        if (requested.contains("location") && !locked.contains("location")) {
+            candidate.setLocation(fieldValue(parseReport, "location", candidate.getLocation()));
+        }
+        if (requested.contains("education") && !locked.contains("education")) {
+            candidate.setEducation(fieldValue(parseReport, "education", candidate.getEducation()));
+        }
+        if (requested.contains("experience") && !locked.contains("experience")) {
+            candidate.setExperience(fieldValue(parseReport, "experience", candidate.getExperience()));
+        }
+        if (requested.contains("skillsSummary") && !locked.contains("skillsSummary")) {
+            candidate.setSkillsSummary(fieldValue(parseReport, "skillsSummary", candidate.getSkillsSummary()));
+        }
+        if (requested.contains("projectSummary") && !locked.contains("projectSummary")) {
+            candidate.setProjectSummary(fieldValue(parseReport, "projectSummary", candidate.getProjectSummary()));
+        }
+    }
+
+    @Transactional
+    public void saveManualParsedFields(Long candidateId, ParsedProfileManualFieldsRequest request) {
+        currentUserService.requireAnyRole(RoleType.HR, RoleType.ADMIN);
+        Candidate candidate = candidateService.getEntity(candidateId);
+        if (request.name() != null) {
+            candidate.setName(request.name());
+        }
+        if (request.phone() != null) {
+            candidate.setPhone(request.phone());
+        }
+        if (request.email() != null) {
+            candidate.setEmail(request.email());
+        }
+        if (request.location() != null) {
+            candidate.setLocation(request.location());
+        }
+        if (request.education() != null) {
+            candidate.setEducation(request.education());
+        }
+        if (request.experience() != null) {
+            candidate.setExperience(request.experience());
+        }
+        if (request.skillsSummary() != null) {
+            candidate.setSkillsSummary(request.skillsSummary());
+        }
+        if (request.projectSummary() != null) {
+            candidate.setProjectSummary(request.projectSummary());
+        }
+        // Manual fields are considered locked and should not be overwritten by auto apply.
+        Set<String> locked = Set.of("name", "phone", "email", "location", "education", "experience", "skillsSummary", "projectSummary");
+        candidate.setParsedFieldLocksJson(write(locked));
+    }
+
     public List<AgentJobResponse> decisionHistory(Long candidateId) {
         return agentJobRepository.findByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, AgentJobType.DECISION)
                 .stream()
@@ -210,6 +281,11 @@ public class AgentService {
             applyLegacyParsedDraft(result, request);
             if (request.parseReport() != null) {
                 result.setParseReportJson(write(request.parseReport()));
+                result.setSkillsJson(write(request.parseReport().skills()));
+                result.setProjectsJson(write(request.parseReport().projects()));
+                result.setExperiencesJson(write(request.parseReport().experiences()));
+                result.setEducationsJson(write(request.parseReport().educations()));
+                result.setRawBlocksJson(write(request.parseReport().rawBlocks()));
                 applyParseReportDraft(result, request.parseReport());
             }
             if (request.decisionReport() != null) {
@@ -268,6 +344,12 @@ public class AgentService {
         payload.put("status", interviewPlan.getStatus().name());
         payload.put("scheduledAt", interviewPlan.getScheduledAt());
         payload.put("endsAt", interviewPlan.getEndsAt());
+        payload.put("meetingType", interviewPlan.getMeetingType().name());
+        payload.put("meetingUrl", interviewPlan.getMeetingUrl());
+        payload.put("meetingId", interviewPlan.getMeetingId());
+        payload.put("meetingPassword", interviewPlan.getMeetingPassword());
+        payload.put("interviewStageCode", interviewPlan.getInterviewStageCode());
+        payload.put("interviewStageLabel", interviewPlan.getInterviewStageLabel());
         payload.put("evaluations", evaluations.stream().map(evaluation -> {
             Map<String, Object> evaluationPayload = new LinkedHashMap<>();
             evaluationPayload.put("interviewer", evaluation.getInterviewer().getDisplayName());
@@ -307,8 +389,17 @@ public class AgentService {
                 List.of("使用候选人已有资料作为兜底输入"),
                 skills,
                 projects,
+                skills.stream()
+                        .map(skill -> new ParseSkillResponse(skill, skill, "candidate_profile", 0.3))
+                        .toList(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
                 fields,
-                List.of(new ParseIssueResponse("INFO", "建议先执行一次简历解析，以获得更完整的结构化结果"))
+                List.of(new ParseIssueResponse("INFO", "建议先执行一次简历解析，以获得更完整的结构化结果")),
+                "FALLBACK",
+                false
         );
     }
 
@@ -379,8 +470,17 @@ public class AgentService {
                 splitItems(result.getParsedProjectSummary()).stream()
                         .map(item -> new ParseProjectResponse("项目经历", item))
                         .toList(),
+                splitItems(result.getParsedSkillsSummary()).stream()
+                        .map(item -> new ParseSkillResponse(item, item, "legacy_result", 0.35))
+                        .toList(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
                 fields,
-                List.of()
+                List.of(),
+                "LEGACY",
+                false
         );
     }
 
@@ -522,5 +622,16 @@ public class AgentService {
             }
         }
         return null;
+    }
+
+    private Set<String> readLockedFields(Candidate candidate) {
+        try {
+            return candidate.getParsedFieldLocksJson() == null || candidate.getParsedFieldLocksJson().isBlank()
+                    ? Set.of()
+                    : objectMapper.readValue(candidate.getParsedFieldLocksJson(), new TypeReference<>() {
+                    });
+        } catch (JsonProcessingException exception) {
+            return Set.of();
+        }
     }
 }

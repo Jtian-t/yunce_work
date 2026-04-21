@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,6 +34,16 @@ public class AgentController {
     @GetMapping("/api/candidates/{candidateId}/parse-jobs/latest")
     AgentJobResponse latestParse(@PathVariable Long candidateId) {
         return agentService.latestParse(candidateId);
+    }
+
+    @PostMapping("/api/candidates/{candidateId}/parsed-profile/apply")
+    void applyParsedProfile(@PathVariable Long candidateId, @RequestBody(required = false) ApplyParsedProfileRequest request) {
+        agentService.applyParsedProfile(candidateId, request == null ? new ApplyParsedProfileRequest(null) : request);
+    }
+
+    @PutMapping("/api/candidates/{candidateId}/parsed-profile/manual-fields")
+    void saveManualParsedFields(@PathVariable Long candidateId, @Valid @RequestBody ParsedProfileManualFieldsRequest request) {
+        agentService.saveManualParsedFields(candidateId, request);
     }
 
     @PostMapping("/api/candidates/{candidateId}/decision-jobs")

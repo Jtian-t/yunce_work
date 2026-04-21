@@ -46,6 +46,21 @@ public class AgentResult extends BaseEntity {
     @Lob
     private String decisionReportJson;
 
+    @Lob
+    private String skillsJson;
+
+    @Lob
+    private String projectsJson;
+
+    @Lob
+    private String experiencesJson;
+
+    @Lob
+    private String educationsJson;
+
+    @Lob
+    private String rawBlocksJson;
+
     @Column(length = 255)
     private String parsedName;
 

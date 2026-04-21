@@ -20,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -120,8 +121,19 @@ class RecruitPlatformApplicationTests {
                         .content(interviewPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("PLANNED"))
+                .andExpect(jsonPath("$.meetingType").value("ONSITE"))
                 .andReturn();
         Long interviewId = readJson(interviewResult).path("id").asLong();
+
+        mockMvc.perform(get("/api/interviews/mine")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(interviewerToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id", hasItem(interviewId.intValue())));
+
+        mockMvc.perform(get("/api/notifications")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(interviewerToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].type").exists());
 
         String evaluationPayload = """
                 {
@@ -134,6 +146,43 @@ class RecruitPlatformApplicationTests {
                 }
                 """;
         mockMvc.perform(post("/api/interviews/{id}/evaluations", interviewId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(interviewerToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(evaluationPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("PASS"));
+
+        mockMvc.perform(get("/api/candidates/{id}", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value("PENDING_INTERVIEW"));
+
+        String finalInterviewPayload = """
+                {
+                  "candidateId": %d,
+                  "interviewerId": %d,
+                  "roundLabel": "终面",
+                  "scheduledAt": "%s",
+                  "endsAt": "%s",
+                  "meetingType": "TENCENT_MEETING",
+                  "meetingUrl": "https://meeting.tencent.com/final"
+                }
+                """.formatted(
+                candidateId,
+                interviewerId,
+                OffsetDateTime.now().plusDays(2).truncatedTo(ChronoUnit.SECONDS),
+                OffsetDateTime.now().plusDays(2).plusHours(1).truncatedTo(ChronoUnit.SECONDS)
+        );
+        MvcResult finalInterviewResult = mockMvc.perform(post("/api/interviews")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(finalInterviewPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PLANNED"))
+                .andReturn();
+        Long finalInterviewId = readJson(finalInterviewResult).path("id").asLong();
+
+        mockMvc.perform(post("/api/interviews/{id}/evaluations", finalInterviewId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(interviewerToken))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(evaluationPayload))
@@ -270,6 +319,24 @@ class RecruitPlatformApplicationTests {
                 .andExpect(jsonPath("$.result.parsedCandidateDraft.projectSummary").exists())
                 .andExpect(jsonPath("$.result.parseReport.summary").exists())
                 .andExpect(jsonPath("$.result.parseReport.fields.email.value").exists());
+
+        mockMvc.perform(post("/api/candidates/{id}/parsed-profile/apply", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fields\":[\"skillsSummary\",\"projectSummary\"]}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(put("/api/candidates/{id}/parsed-profile/manual-fields", candidateId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(hrToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "skillsSummary":"手工技能",
+                                  "projectSummary":"手工项目",
+                                  "lockReason":"test"
+                                }
+                                """))
+                .andExpect(status().isOk());
 
         String schedulePayload = """
                 {

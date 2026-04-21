@@ -80,11 +80,33 @@ public class CandidateAdvanceService {
         if (request.interviewerId() == null || request.roundLabel() == null || request.scheduledAt() == null || request.endsAt() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Interview fields are required");
         }
-        interviewService.schedule(candidateId, request.interviewerId(), request.roundLabel(), request.scheduledAt(), request.endsAt());
+        if (interviewService.hasPendingOrMissingEvaluations(candidateId)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INTERVIEW_FLOW_INVALID",
+                    "Previous interview is not completed or evaluation is missing");
+        }
+        interviewService.schedule(
+                candidateId,
+                request.interviewerId(),
+                request.roundLabel(),
+                request.scheduledAt(),
+                request.endsAt(),
+                request.meetingType(),
+                request.meetingUrl(),
+                request.meetingId(),
+                request.meetingPassword(),
+                request.interviewStageCode(),
+                request.interviewStageLabel(),
+                request.interviewDepartmentId(),
+                request.interviewNotes()
+        );
     }
 
     private void advanceOfferPending(Candidate candidate) {
         requireState(candidate, CandidateAdvanceAction.ADVANCE_TO_OFFER_PENDING, CandidateStatus.INTERVIEW_PASSED);
+        if (interviewService.hasPendingOrMissingEvaluations(candidate.getId())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INTERVIEW_FLOW_INVALID",
+                    "Cannot advance to offer when interview evaluations are incomplete");
+        }
         candidate.setStatus(CandidateStatus.OFFER_PENDING);
         candidate.setNextAction("待发 Offer");
         candidateService.recordWorkflowEvent(candidate, "ADVANCED_TO_OFFER_PENDING", "推进 Offer 阶段", "候选人已进入 Offer 阶段");

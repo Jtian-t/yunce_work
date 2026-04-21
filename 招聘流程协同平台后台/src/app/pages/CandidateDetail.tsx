@@ -9,6 +9,7 @@ import {
   Loader2,
   Mail,
   MapPin,
+  Pencil,
   Phone,
   RefreshCw,
   Sparkles,
@@ -64,6 +65,8 @@ export function CandidateDetail() {
     createDecisionJob,
     loadLatestDecisionJob,
     loadDecisionHistory,
+    applyParsedProfile,
+    saveManualParsedFields,
   } = useData();
 
   const [candidate, setCandidate] = useState<CandidateDetailType | null>(null);
@@ -80,12 +83,28 @@ export function CandidateDetail() {
   const [reviewerId, setReviewerId] = useState<number | "">("");
   const [interviewerId, setInterviewerId] = useState<number | "">("");
   const [roundLabel, setRoundLabel] = useState("一面");
+  const [meetingType, setMeetingType] = useState<"ONSITE" | "TENCENT_MEETING" | "PHONE">("TENCENT_MEETING");
+  const [meetingUrl, setMeetingUrl] = useState("");
+  const [meetingId, setMeetingId] = useState("");
+  const [meetingPassword, setMeetingPassword] = useState("");
+  const [interviewNotes, setInterviewNotes] = useState("");
   const [scheduledAt, setScheduledAt] = useState(toLocalInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
   const [endsAt, setEndsAt] = useState(toLocalInputValue(new Date(Date.now() + 25 * 60 * 60 * 1000)));
   const [actionNote, setActionNote] = useState("");
   const [parseHint, setParseHint] = useState("");
   const [decisionHint, setDecisionHint] = useState("");
   const [decisionDialogOpen, setDecisionDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    location: "",
+    education: "",
+    experience: "",
+    skillsSummary: "",
+    projectSummary: "",
+  });
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [parseLoading, setParseLoading] = useState(false);
@@ -181,6 +200,39 @@ export function CandidateDetail() {
   const parseReport = latestParseJob?.result?.parseReport ?? null;
   const latestDecisionReport = latestDecisionJob?.result?.decisionReport ?? null;
   const selectedDecisionReport = selectedDecisionJob?.result?.decisionReport ?? null;
+  const candidateDepartmentId = useMemo(() => {
+    if (!candidate?.department) {
+      return null;
+    }
+    return departments.find((department) => department.name === candidate.department)?.id ?? null;
+  }, [candidate?.department, departments]);
+  const visibleInterviewers = useMemo(() => {
+    if (!candidateDepartmentId) {
+      return interviewers;
+    }
+    const scopedInterviewers = interviewers.filter((item) => item.departmentId === candidateDepartmentId);
+    return scopedInterviewers.length > 0 ? scopedInterviewers : interviewers;
+  }, [candidateDepartmentId, interviewers]);
+
+  useEffect(() => {
+    if (candidateDepartmentId == null) {
+      return;
+    }
+    let active = true;
+    loadUsersByRole("INTERVIEWER", candidateDepartmentId)
+      .then((items) => {
+        if (active) {
+          setInterviewers(items);
+        }
+      })
+      .catch(() => {
+        // Keep the default list if the department-scoped lookup fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [candidateDepartmentId, loadUsersByRole]);
+
   const skillList = parseReport?.extractedSkills?.length
     ? parseReport.extractedSkills
     : candidate?.skillsSummary
@@ -207,6 +259,23 @@ export function CandidateDetail() {
     } finally {
       setActionLoading(false);
     }
+  }
+
+  function resolveInterviewStageCode(label: string) {
+    const normalized = label.replace(/\s+/g, "");
+    if (normalized.includes("终")) {
+      return "FINAL";
+    }
+    if (normalized.toUpperCase().includes("HR")) {
+      return "HR";
+    }
+    if (normalized.includes("三")) {
+      return "ROUND_3";
+    }
+    if (normalized.includes("二")) {
+      return "ROUND_2";
+    }
+    return "ROUND_1";
   }
 
   async function waitForDecision(candidateId: number) {
@@ -297,6 +366,76 @@ export function CandidateDetail() {
     }
   }
 
+  async function handleApplyParsedFields() {
+    if (!candidate) {
+      return;
+    }
+    setActionLoading(true);
+    setError(null);
+    try {
+      await applyParsedProfile(candidate.id);
+      setRefreshKey((value) => value + 1);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "解析结果回填失败");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function openEditDialog() {
+    if (!candidate) {
+      return;
+    }
+    setEditForm({
+      name: candidate.name ?? "",
+      phone: candidate.phone ?? "",
+      email: candidate.email ?? "",
+      location: candidate.location ?? "",
+      education: candidate.education ?? "",
+      experience: candidate.experience ?? "",
+      skillsSummary: candidate.skillsSummary ?? "",
+      projectSummary: candidate.projectSummary ?? "",
+    });
+    setEditDialogOpen(true);
+  }
+
+  function fillFromParse() {
+    if (!parseReport) {
+      return;
+    }
+    setEditForm((prev) => ({
+      ...prev,
+      name: parseReport.fields.name?.value ?? prev.name,
+      phone: parseReport.fields.phone?.value ?? prev.phone,
+      email: parseReport.fields.email?.value ?? prev.email,
+      location: parseReport.fields.location?.value ?? prev.location,
+      education: parseReport.fields.education?.value ?? prev.education,
+      experience: parseReport.fields.experience?.value ?? prev.experience,
+      skillsSummary: parseReport.fields.skillsSummary?.value ?? prev.skillsSummary,
+      projectSummary: parseReport.fields.projectSummary?.value ?? prev.projectSummary,
+    }));
+  }
+
+  async function saveManualFields() {
+    if (!candidate) {
+      return;
+    }
+    setActionLoading(true);
+    setError(null);
+    try {
+      await saveManualParsedFields(candidate.id, {
+        ...editForm,
+        lockReason: "HR 手工确认",
+      });
+      setEditDialogOpen(false);
+      setRefreshKey((value) => value + 1);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "保存基础信息失败");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   if (loading) {
     return <div className="p-6 text-gray-600">正在加载候选人详情...</div>;
   }
@@ -339,6 +478,14 @@ export function CandidateDetail() {
               <h2 className="text-xl font-bold text-gray-900">{candidate.name}</h2>
               <p className="mt-1 text-gray-600">{candidate.position}</p>
               <span className="mt-3 rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">{candidate.status}</span>
+              <button
+                type="button"
+                onClick={openEditDialog}
+                className="mt-3 inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Pencil className="h-4 w-4" />
+                编辑基础信息
+              </button>
             </div>
 
             <div className="space-y-3 text-sm">
@@ -401,15 +548,25 @@ export function CandidateDetail() {
                 <h3 className="text-lg font-semibold text-gray-900">简历解析洞察</h3>
                 <p className="mt-1 text-sm text-gray-500">支持重新解析并保留最新结构化结果，供后续流程与辅助决策复用。</p>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleReparseResume()}
-                disabled={parseLoading || !candidate.latestResume}
-                className="inline-flex items-center gap-2 rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {parseLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                重新解析
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleApplyParsedFields()}
+                  disabled={actionLoading || !parseReport}
+                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  一键回填到候选人
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleReparseResume()}
+                  disabled={parseLoading || !candidate.latestResume}
+                  className="inline-flex items-center gap-2 rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {parseLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  重新解析
+                </button>
+              </div>
             </div>
 
             <label className="mt-4 block text-sm text-gray-700">
@@ -427,6 +584,9 @@ export function CandidateDetail() {
                 <div className="rounded-lg border border-green-200 bg-green-50 p-4">
                   <div className="text-sm font-medium text-green-900">最新解析摘要</div>
                   <div className="mt-1 text-sm text-green-800">{parseReport.summary}</div>
+                  <div className="mt-2 text-xs text-green-700">
+                    模式：{parseReport.extractionMode ?? "UNKNOWN"} {parseReport.ocrRequired ? "· 需要 OCR" : ""}
+                  </div>
                 </div>
 
                 {parseReport.highlights.length > 0 && (
@@ -624,18 +784,24 @@ export function CandidateDetail() {
                       className="rounded-lg border border-gray-300 px-3 py-2.5"
                     >
                       <option value="">选择面试官</option>
-                      {interviewers.map((item) => (
+                      {visibleInterviewers.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.displayName}
+                          {item.departmentName ? ` · ${item.departmentName}` : ""}
                         </option>
                       ))}
                     </select>
-                    <input
+                    <select
                       value={roundLabel}
                       onChange={(event) => setRoundLabel(event.target.value)}
                       className="rounded-lg border border-gray-300 px-3 py-2.5"
-                      placeholder="一面 / 二面 / HR 面"
-                    />
+                    >
+                      <option value="一面">一面</option>
+                      <option value="二面">二面</option>
+                      <option value="三面">三面</option>
+                      <option value="HR面">HR 面</option>
+                      <option value="终面">终面</option>
+                    </select>
                     <input
                       type="datetime-local"
                       value={scheduledAt}
@@ -648,7 +814,40 @@ export function CandidateDetail() {
                       onChange={(event) => setEndsAt(event.target.value)}
                       className="rounded-lg border border-gray-300 px-3 py-2.5"
                     />
+                    <select
+                      value={meetingType}
+                      onChange={(event) => setMeetingType(event.target.value as "ONSITE" | "TENCENT_MEETING" | "PHONE")}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                    >
+                      <option value="TENCENT_MEETING">腾讯会议</option>
+                      <option value="ONSITE">现场面试</option>
+                      <option value="PHONE">电话面试</option>
+                    </select>
+                    <input
+                      value={meetingUrl}
+                      onChange={(event) => setMeetingUrl(event.target.value)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      placeholder="会议链接"
+                    />
+                    <input
+                      value={meetingId}
+                      onChange={(event) => setMeetingId(event.target.value)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      placeholder="会议号"
+                    />
+                    <input
+                      value={meetingPassword}
+                      onChange={(event) => setMeetingPassword(event.target.value)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      placeholder="会议密码"
+                    />
                   </div>
+                  <textarea
+                    value={interviewNotes}
+                    onChange={(event) => setInterviewNotes(event.target.value)}
+                    className="mt-3 min-h-20 w-full rounded-lg border border-gray-300 px-3 py-2.5"
+                    placeholder="面试备注"
+                  />
                   <button
                     type="button"
                     disabled={actionLoading || !interviewerId}
@@ -659,6 +858,14 @@ export function CandidateDetail() {
                         roundLabel,
                         scheduledAt: new Date(scheduledAt).toISOString(),
                         endsAt: new Date(endsAt).toISOString(),
+                        meetingType,
+                        meetingUrl,
+                        meetingId,
+                        meetingPassword,
+                        interviewStageCode: resolveInterviewStageCode(roundLabel),
+                        interviewStageLabel: roundLabel,
+                        interviewDepartmentId: departmentId ? Number(departmentId) : undefined,
+                        interviewNotes,
                       })
                     }
                     className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -812,6 +1019,27 @@ export function CandidateDetail() {
           </div>
 
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-gray-900">面试进展</h3>
+            <div className="mt-4 space-y-3">
+              {interviews.length > 0 ? (
+                interviews.map((interview) => (
+                  <div key={`progress-${interview.id}`} className="rounded-lg border border-gray-200 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium text-gray-900">{interview.interviewStageLabel ?? interview.roundLabel}</div>
+                      <span className="text-xs text-gray-500">{interview.evaluationSubmitted ? "已评价" : "待评价"}</span>
+                    </div>
+                    <div className="mt-1 text-sm text-gray-600">
+                      {interview.status} · {new Date(interview.scheduledAt).toLocaleString("zh-CN")}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-gray-500">暂无面试进展</div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900">面试记录</h3>
             <div className="mt-4 space-y-4">
               {interviews.length > 0 ? (
@@ -819,10 +1047,25 @@ export function CandidateDetail() {
                   <div key={interview.id} className="rounded-lg border border-gray-200 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <div className="font-semibold text-gray-900">{interview.roundLabel}</div>
+                        <div className="font-semibold text-gray-900">{interview.interviewStageLabel ?? interview.roundLabel}</div>
                         <div className="mt-1 text-sm text-gray-600">
                           面试官：{interview.interviewer} · {new Date(interview.scheduledAt).toLocaleString("zh-CN")}
                         </div>
+                        {interview.meetingUrl && (
+                          <a
+                            href={interview.meetingUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 inline-block text-sm text-blue-600 hover:text-blue-700"
+                          >
+                            打开会议链接
+                          </a>
+                        )}
+                        {(interview.meetingId || interview.meetingPassword) && (
+                          <div className="mt-1 text-xs text-gray-500">
+                            会议号：{interview.meetingId ?? "-"} · 密码：{interview.meetingPassword ?? "-"}
+                          </div>
+                        )}
                       </div>
                       <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">{interview.status}</span>
                     </div>
@@ -850,6 +1093,43 @@ export function CandidateDetail() {
           </div>
         </div>
       </div>
+
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>编辑基础信息</DialogTitle>
+            <DialogDescription>支持解析结果回填，并将当前手工确认值锁定为最终信息。</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 md:grid-cols-2">
+            <input value={editForm.name} onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="姓名" />
+            <input value={editForm.phone} onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="手机号" />
+            <input value={editForm.email} onChange={(event) => setEditForm((prev) => ({ ...prev, email: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="邮箱" />
+            <input value={editForm.location} onChange={(event) => setEditForm((prev) => ({ ...prev, location: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="城市" />
+            <input value={editForm.education} onChange={(event) => setEditForm((prev) => ({ ...prev, education: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="学历" />
+            <input value={editForm.experience} onChange={(event) => setEditForm((prev) => ({ ...prev, experience: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="工作年限" />
+          </div>
+          <textarea value={editForm.skillsSummary} onChange={(event) => setEditForm((prev) => ({ ...prev, skillsSummary: event.target.value }))} className="min-h-24 w-full rounded-lg border border-gray-300 px-3 py-2.5" placeholder="技能摘要" />
+          <textarea value={editForm.projectSummary} onChange={(event) => setEditForm((prev) => ({ ...prev, projectSummary: event.target.value }))} className="min-h-24 w-full rounded-lg border border-gray-300 px-3 py-2.5" placeholder="项目摘要" />
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={fillFromParse}
+              disabled={!parseReport}
+              className="inline-flex items-center justify-center rounded-lg border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+            >
+              使用解析结果回填
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveManualFields()}
+              disabled={actionLoading}
+              className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              保存并锁定人工值
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={decisionDialogOpen} onOpenChange={setDecisionDialogOpen}>
         <DialogContent className="sm:max-w-4xl">

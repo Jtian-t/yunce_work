@@ -21,7 +21,7 @@ public class LookupController {
     }
 
     @GetMapping("/users")
-    List<UserLookupResponse> users(@RequestParam RoleType role) {
-        return lookupService.users(role);
+    List<UserLookupResponse> users(@RequestParam RoleType role, @RequestParam(required = false) Long departmentId) {
+        return lookupService.users(role, departmentId);
     }
 }

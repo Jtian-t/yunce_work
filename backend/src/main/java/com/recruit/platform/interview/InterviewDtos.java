@@ -1,5 +1,6 @@
 package com.recruit.platform.interview;
 
+import com.recruit.platform.common.enums.InterviewMeetingType;
 import com.recruit.platform.common.enums.InterviewResult;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -13,7 +14,15 @@ record CreateInterviewPlanRequest(
         @NotNull Long interviewerId,
         @NotBlank String roundLabel,
         @NotNull OffsetDateTime scheduledAt,
-        @NotNull OffsetDateTime endsAt
+        @NotNull OffsetDateTime endsAt,
+        InterviewMeetingType meetingType,
+        String meetingUrl,
+        String meetingId,
+        String meetingPassword,
+        String interviewStageCode,
+        String interviewStageLabel,
+        Long departmentId,
+        String notes
 ) {
 }
 
@@ -32,9 +41,22 @@ record InterviewPlanResponse(
         Long candidateId,
         String roundLabel,
         String interviewer,
+        String candidateName,
+        String position,
         String status,
         OffsetDateTime scheduledAt,
         OffsetDateTime endsAt,
+        String meetingType,
+        String meetingUrl,
+        String meetingId,
+        String meetingPassword,
+        String interviewStageCode,
+        String interviewStageLabel,
+        String organizer,
+        Long departmentId,
+        String departmentName,
+        String notes,
+        boolean evaluationSubmitted,
         List<InterviewEvaluationResponse> evaluations
 ) {
 }

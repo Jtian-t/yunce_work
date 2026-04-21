@@ -32,4 +32,9 @@ public class InterviewController {
     List<InterviewPlanResponse> listByCandidate(@PathVariable Long candidateId) {
         return interviewService.listByCandidate(candidateId);
     }
+
+    @GetMapping("/api/interviews/mine")
+    List<InterviewPlanResponse> listMine() {
+        return interviewService.listMine();
+    }
 }

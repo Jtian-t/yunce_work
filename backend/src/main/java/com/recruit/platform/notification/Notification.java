@@ -9,6 +9,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import lombok.Getter;
 import lombok.Setter;
@@ -23,7 +24,7 @@ public class Notification extends BaseEntity {
     private User recipient;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, length = 64)
     private NotificationType type;
 
     @Column(nullable = false)
@@ -34,4 +35,7 @@ public class Notification extends BaseEntity {
 
     @Column(name = "is_read", nullable = false)
     private boolean read = false;
+
+    @Lob
+    private String payloadJson;
 }

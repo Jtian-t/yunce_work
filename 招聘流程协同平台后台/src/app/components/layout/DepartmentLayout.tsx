@@ -1,10 +1,11 @@
 import { Outlet, Link, useLocation } from "react-router";
 import { ClipboardList, Users, LogOut, Bell } from "lucide-react";
-import { useState } from "react";
+import { useData } from "../../context/DataContext";
 
 export function DepartmentLayout() {
   const location = useLocation();
-  const [notifications] = useState(3);
+  const { notifications } = useData();
+  const unread = notifications.filter((item) => !item.read).length;
 
   const navItems = [
     { path: "/dept", label: "待处理简历", icon: ClipboardList },
@@ -85,9 +86,9 @@ export function DepartmentLayout() {
           <div className="flex items-center gap-4">
             <button className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors">
               <Bell className="w-5 h-5 text-gray-600" />
-              {notifications > 0 && (
+              {unread > 0 && (
                 <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                  {notifications}
+                  {unread}
                 </span>
               )}
             </button>

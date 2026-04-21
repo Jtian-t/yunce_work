@@ -1,6 +1,7 @@
 package com.recruit.platform.candidate;
 
 import com.recruit.platform.common.enums.CandidateAdvanceAction;
+import com.recruit.platform.common.enums.InterviewMeetingType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
@@ -93,6 +94,14 @@ record AdvanceCandidateRequest(
         String roundLabel,
         OffsetDateTime scheduledAt,
         OffsetDateTime endsAt,
+        InterviewMeetingType meetingType,
+        String meetingUrl,
+        String meetingId,
+        String meetingPassword,
+        String interviewStageCode,
+        String interviewStageLabel,
+        Long interviewDepartmentId,
+        String interviewNotes,
         String note
 ) {
 }

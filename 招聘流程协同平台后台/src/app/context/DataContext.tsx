@@ -139,10 +139,33 @@ export interface InterviewPlan {
   candidateId: number;
   roundLabel: string;
   interviewer: string;
+  candidateName?: string;
+  position?: string;
   status: string;
   scheduledAt: string;
   endsAt: string;
+  meetingType?: string | null;
+  meetingUrl?: string | null;
+  meetingId?: string | null;
+  meetingPassword?: string | null;
+  interviewStageCode?: string | null;
+  interviewStageLabel?: string | null;
+  organizer?: string | null;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  notes?: string | null;
+  evaluationSubmitted?: boolean;
   evaluations: InterviewEvaluation[];
+}
+
+export interface NotificationItem {
+  id: number;
+  type: string;
+  title: string;
+  content: string;
+  read: boolean;
+  createdAt: string;
+  payload: Record<string, unknown>;
 }
 
 export interface LookupDepartment {
@@ -187,13 +210,37 @@ export interface ParseProject {
   summary: string;
 }
 
+export interface ParseSkill {
+  rawTerm: string;
+  normalizedName: string;
+  sourceSnippet?: string | null;
+  confidence?: number | null;
+}
+
+export interface ParseProjectDetail {
+  projectName?: string | null;
+  period?: string | null;
+  role?: string | null;
+  techStack?: string[];
+  responsibilities?: string[];
+  achievements?: string[];
+  summary?: string | null;
+}
+
 export interface ParseReport {
   summary: string;
   highlights: string[];
   extractedSkills: string[];
   projectExperiences: ParseProject[];
+  skills?: ParseSkill[];
+  projects?: ParseProjectDetail[];
+  experiences?: unknown[];
+  educations?: unknown[];
+  rawBlocks?: unknown[];
   fields: Record<string, ParseFieldValue>;
   issues: ParseIssue[];
+  extractionMode?: string;
+  ocrRequired?: boolean;
 }
 
 export interface DecisionReport {
@@ -258,6 +305,14 @@ export interface AdvanceCandidatePayload {
   roundLabel?: string;
   scheduledAt?: string;
   endsAt?: string;
+  meetingType?: "ONSITE" | "TENCENT_MEETING" | "PHONE";
+  meetingUrl?: string;
+  meetingId?: string;
+  meetingPassword?: string;
+  interviewStageCode?: string;
+  interviewStageLabel?: string;
+  interviewDepartmentId?: number;
+  interviewNotes?: string;
   note?: string;
 }
 
@@ -270,6 +325,7 @@ interface DataContextType {
   departmentEfficiency: DepartmentEfficiency[];
   alerts: DashboardAlert[];
   currentUser: CurrentUser | null;
+  notifications: NotificationItem[];
   pendingFeedbackCount: number;
   loading: boolean;
   error: string | null;
@@ -279,6 +335,7 @@ interface DataContextType {
   loadCandidateTimeline: (id: number) => Promise<TimelineEvent[]>;
   loadCandidateFeedbacks: (id: number) => Promise<CandidateFeedback[]>;
   loadCandidateInterviews: (id: number) => Promise<InterviewPlan[]>;
+  loadMyInterviews: () => Promise<InterviewPlan[]>;
   createCandidate: (payload: CandidateUpsertPayload) => Promise<CandidateDetail>;
   updateCandidate: (id: number, payload: CandidateUpsertPayload) => Promise<CandidateDetail>;
   uploadResume: (candidateId: number, file: File) => Promise<void>;
@@ -288,9 +345,24 @@ interface DataContextType {
   createDecisionJob: (candidateId: number, focusHint?: string) => Promise<AgentJob>;
   loadLatestDecisionJob: (candidateId: number) => Promise<AgentJob | null>;
   loadDecisionHistory: (candidateId: number) => Promise<AgentJob[]>;
+  applyParsedProfile: (candidateId: number, fields?: string[]) => Promise<void>;
+  saveManualParsedFields: (
+    candidateId: number,
+    payload: {
+      name?: string;
+      phone?: string;
+      email?: string;
+      location?: string;
+      education?: string;
+      experience?: string;
+      skillsSummary?: string;
+      projectSummary?: string;
+      lockReason: string;
+    }
+  ) => Promise<void>;
   advanceCandidate: (candidateId: number, payload: AdvanceCandidatePayload) => Promise<CandidateDetail>;
   loadDepartments: () => Promise<LookupDepartment[]>;
-  loadUsersByRole: (role: "DEPARTMENT_LEAD" | "INTERVIEWER") => Promise<LookupUser[]>;
+  loadUsersByRole: (role: "DEPARTMENT_LEAD" | "INTERVIEWER", departmentId?: number) => Promise<LookupUser[]>;
   submitDepartmentFeedback: (params: {
     candidateId: number;
     passed: boolean;
@@ -303,6 +375,8 @@ interface DataContextType {
   getDepartmentTaskByCandidateId: (candidateId: number) => DepartmentTask | undefined;
   downloadResume: (candidateId: number, fileName?: string) => Promise<void>;
   previewResume: (candidateId: number) => Promise<void>;
+  loadNotifications: () => Promise<NotificationItem[]>;
+  markNotificationRead: (id: number) => Promise<NotificationItem>;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -363,6 +437,32 @@ function mapAgentJob(job: any): AgentJob {
   };
 }
 
+function mapInterviewPlan(plan: any): InterviewPlan {
+  return {
+    id: plan.id,
+    candidateId: plan.candidateId,
+    roundLabel: plan.roundLabel,
+    interviewer: plan.interviewer,
+    candidateName: plan.candidateName ?? undefined,
+    position: plan.position ?? undefined,
+    status: plan.status,
+    scheduledAt: plan.scheduledAt,
+    endsAt: plan.endsAt,
+    meetingType: plan.meetingType ?? null,
+    meetingUrl: plan.meetingUrl ?? null,
+    meetingId: plan.meetingId ?? null,
+    meetingPassword: plan.meetingPassword ?? null,
+    interviewStageCode: plan.interviewStageCode ?? null,
+    interviewStageLabel: plan.interviewStageLabel ?? null,
+    organizer: plan.organizer ?? null,
+    departmentId: plan.departmentId ?? null,
+    departmentName: plan.departmentName ?? null,
+    notes: plan.notes ?? null,
+    evaluationSubmitted: Boolean(plan.evaluationSubmitted),
+    evaluations: Array.isArray(plan.evaluations) ? plan.evaluations : [],
+  };
+}
+
 async function bootstrapToken() {
   const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
     method: "POST",
@@ -393,6 +493,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [departmentEfficiency, setDepartmentEfficiency] = useState<DepartmentEfficiency[]>([]);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -503,6 +604,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         efficiencyData,
         alertData,
         taskData,
+        notificationData,
       ] = await Promise.all([
         apiRequest<any[]>("/api/candidates"),
         apiRequest<DashboardOverview>("/api/dashboard/overview"),
@@ -511,6 +613,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         apiRequest<DepartmentEfficiency[]>("/api/dashboard/department-efficiency"),
         apiRequest<DashboardAlert[]>("/api/dashboard/alerts"),
         apiRequest<DepartmentTask[]>("/api/department/tasks"),
+        apiRequest<NotificationItem[]>("/api/notifications"),
       ]);
 
       setCandidates(candidateData.map(mapCandidate));
@@ -520,6 +623,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setDepartmentEfficiency(efficiencyData);
       setAlerts(alertData);
       setDepartmentTasks(taskData);
+      setNotifications(notificationData);
       await loadCurrentUser();
       setAuthReady(true);
     } catch (requestError) {
@@ -543,7 +647,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }
 
   async function loadCandidateInterviews(id: number) {
-    return apiRequest<InterviewPlan[]>(`/api/candidates/${id}/interviews`);
+    const plans = await apiRequest<any[]>(`/api/candidates/${id}/interviews`);
+    return plans.map(mapInterviewPlan);
+  }
+
+  async function loadMyInterviews() {
+    const plans = await apiRequest<any[]>("/api/interviews/mine");
+    return plans.map(mapInterviewPlan);
   }
 
   async function createCandidate(payload: CandidateUpsertPayload) {
@@ -614,6 +724,37 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return jobs.map(mapAgentJob);
   }
 
+  async function applyParsedProfile(candidateId: number, fields?: string[]) {
+    await apiRequest(`/api/candidates/${candidateId}/parsed-profile/apply`, {
+      method: "POST",
+      body: JSON.stringify({
+        fields: fields && fields.length > 0 ? fields : undefined,
+      }),
+    });
+    await refreshData();
+  }
+
+  async function saveManualParsedFields(
+    candidateId: number,
+    payload: {
+      name?: string;
+      phone?: string;
+      email?: string;
+      location?: string;
+      education?: string;
+      experience?: string;
+      skillsSummary?: string;
+      projectSummary?: string;
+      lockReason: string;
+    }
+  ) {
+    await apiRequest(`/api/candidates/${candidateId}/parsed-profile/manual-fields`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    await refreshData();
+  }
+
   async function advanceCandidate(candidateId: number, payload: AdvanceCandidatePayload) {
     const detail = await apiRequest<any>(`/api/candidates/${candidateId}/advance`, {
       method: "POST",
@@ -627,8 +768,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return apiRequest<LookupDepartment[]>("/api/lookups/departments");
   }
 
-  async function loadUsersByRole(role: "DEPARTMENT_LEAD" | "INTERVIEWER") {
-    return apiRequest<LookupUser[]>(`/api/lookups/users?role=${role}`);
+  async function loadUsersByRole(role: "DEPARTMENT_LEAD" | "INTERVIEWER", departmentId?: number) {
+    const params = new URLSearchParams({ role });
+    if (typeof departmentId === "number") {
+      params.set("departmentId", String(departmentId));
+    }
+    return apiRequest<LookupUser[]>(`/api/lookups/users?${params.toString()}`);
   }
 
   async function submitDepartmentFeedback(params: {
@@ -703,6 +848,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function loadNotifications() {
+    const items = await apiRequest<NotificationItem[]>("/api/notifications");
+    setNotifications(items);
+    return items;
+  }
+
+  async function markNotificationRead(id: number) {
+    const updated = await apiRequest<NotificationItem>(`/api/notifications/${id}/read`, {
+      method: "POST",
+    });
+    await loadNotifications();
+    return updated;
+  }
+
   useEffect(() => {
     void refreshData();
   }, []);
@@ -717,6 +876,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       departmentEfficiency,
       alerts,
       currentUser,
+      notifications,
       pendingFeedbackCount: dashboardOverview?.pendingFeedbackCount ?? departmentTasks.length,
       loading,
       error,
@@ -726,6 +886,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       loadCandidateTimeline,
       loadCandidateFeedbacks,
       loadCandidateInterviews,
+      loadMyInterviews,
       createCandidate,
       updateCandidate,
       uploadResume,
@@ -735,6 +896,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       createDecisionJob,
       loadLatestDecisionJob,
       loadDecisionHistory,
+      applyParsedProfile,
+      saveManualParsedFields,
       advanceCandidate,
       loadDepartments,
       loadUsersByRole,
@@ -743,6 +906,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getDepartmentTaskByCandidateId,
       downloadResume,
       previewResume,
+      loadNotifications,
+      markNotificationRead,
     }),
     [
       candidates,
@@ -753,6 +918,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       departmentEfficiency,
       alerts,
       currentUser,
+      notifications,
       loading,
       error,
       authReady,

@@ -1,18 +1,21 @@
 import { Outlet, Link, useLocation } from "react-router";
-import { LayoutDashboard, Users, FileText, TrendingUp, Menu } from "lucide-react";
+import { LayoutDashboard, Users, FileText, TrendingUp, Menu, Bell, CalendarCheck } from "lucide-react";
 import { useState } from "react";
 import { useData } from "../../context/DataContext";
 
 export function MainLayout() {
   const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { currentUser } = useData();
+  const { currentUser, notifications } = useData();
 
   const navItems = [
     { path: "/", label: "招聘总览", icon: LayoutDashboard },
     { path: "/candidates", label: "候选人列表", icon: Users },
+    { path: "/interviews/mine", label: "我的面试", icon: CalendarCheck },
+    { path: "/notifications", label: "我的通知", icon: Bell },
     { path: "/report", label: "每日报告", icon: FileText },
   ];
+  const unread = notifications.filter((item) => !item.read).length;
 
   const isActive = (path: string) => {
     if (path === "/") return location.pathname === "/";
@@ -75,6 +78,14 @@ export function MainLayout() {
             </h1>
           </div>
           <div className="flex items-center gap-4">
+            <Link to="/notifications" className="relative rounded-lg p-2 text-gray-600 hover:bg-gray-100">
+              <Bell className="h-5 w-5" />
+              {unread > 0 && (
+                <span className="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white">
+                  {unread}
+                </span>
+              )}
+            </Link>
             <Link
               to="/dept"
               className="px-4 py-2 border border-purple-300 text-purple-600 rounded-lg hover:bg-purple-50 transition-colors text-sm font-medium"

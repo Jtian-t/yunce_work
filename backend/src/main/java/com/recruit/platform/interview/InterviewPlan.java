@@ -2,7 +2,9 @@ package com.recruit.platform.interview;
 
 import com.recruit.platform.candidate.Candidate;
 import com.recruit.platform.common.BaseEntity;
+import com.recruit.platform.common.enums.InterviewMeetingType;
 import com.recruit.platform.common.enums.InterviewPlanStatus;
+import com.recruit.platform.department.Department;
 import com.recruit.platform.user.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -40,6 +42,33 @@ public class InterviewPlan extends BaseEntity {
 
     @Column(nullable = false)
     private OffsetDateTime endsAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private InterviewMeetingType meetingType = InterviewMeetingType.ONSITE;
+
+    private String meetingUrl;
+
+    private String meetingId;
+
+    private String meetingPassword;
+
+    @Column(nullable = false)
+    private String interviewStageCode = "ROUND_1";
+
+    @Column(nullable = false)
+    private String interviewStageLabel = "一面";
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "organizer_id")
+    private User organizer;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "department_id")
+    private Department department;
+
+    @Column(length = 2000)
+    private String notes;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

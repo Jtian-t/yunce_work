@@ -60,6 +60,7 @@ public class LoggingAgentDispatcher implements AgentDispatcher {
     private final DepartmentFeedbackRepository feedbackRepository;
     private final InterviewPlanRepository interviewPlanRepository;
     private final InterviewEvaluationRepository interviewEvaluationRepository;
+    private final ResumeExtractionPipeline resumeExtractionPipeline;
 
     @Override
     public void dispatch(AgentJob job, String payloadJson) {
@@ -91,6 +92,11 @@ public class LoggingAgentDispatcher implements AgentDispatcher {
             result.setRecommendedAction("请确认解析结果后再推进候选人流程");
             result.setRawReasoningDigest(buildParseDigest(parseReport));
             result.setParseReportJson(write(parseReport));
+            result.setSkillsJson(write(parseReport.skills()));
+            result.setProjectsJson(write(parseReport.projects()));
+            result.setExperiencesJson(write(parseReport.experiences()));
+            result.setEducationsJson(write(parseReport.educations()));
+            result.setRawBlocksJson(write(parseReport.rawBlocks()));
             applyDraft(result, draft);
 
             job.setStatus(AgentJobStatus.SUCCEEDED);
@@ -142,7 +148,10 @@ public class LoggingAgentDispatcher implements AgentDispatcher {
     }
 
     private ParseReportResponse buildParseReport(Map<String, Object> payload, String extractedText) {
-        String normalized = normalizeText(extractedText);
+        PipelineDocument pipelineDocument = resumeExtractionPipeline.ingest(extractedText);
+        String normalized = pipelineDocument.normalizedText();
+        boolean ocrRequired = pipelineDocument.ocrRequired();
+        String extractionMode = pipelineDocument.extractionMode();
         Map<String, ParseFieldValueResponse> fields = new LinkedHashMap<>();
 
         captureField(fields, "name", firstNonBlank(
@@ -218,11 +227,29 @@ public class LoggingAgentDispatcher implements AgentDispatcher {
             issues.add(new ParseIssueResponse("WARN", "项目经历提取不足，建议补充项目职责或成果"));
         }
         if (normalized.isBlank()) {
-            issues.add(new ParseIssueResponse("WARN", "当前简历文本提取结果为空，可能是扫描 PDF，建议更换可选中文本版简历"));
+            issues.add(new ParseIssueResponse("WARN", "当前简历文本提取结果为空，可能是扫描 PDF，建议走 OCR 分支"));
         }
 
         String summary = buildParseSummary(fields, skills, projects, issues);
-        return new ParseReportResponse(summary, highlights, skills, projects, fields, issues);
+        List<ParseSkillResponse> structuredSkills = resumeExtractionPipeline.toStructuredSkills(skills);
+        List<ParseProjectDetailResponse> structuredProjects = resumeExtractionPipeline.toStructuredProjects(projects);
+        List<ParseRawBlockResponse> rawBlocks = new ArrayList<>(pipelineDocument.rawBlocks());
+        projects.forEach(project -> rawBlocks.add(new ParseRawBlockResponse("PROJECT", project.title(), project.summary())));
+        return new ParseReportResponse(
+                summary,
+                highlights,
+                skills,
+                projects,
+                structuredSkills,
+                structuredProjects,
+                List.of(),
+                List.of(),
+                rawBlocks,
+                fields,
+                issues,
+                extractionMode,
+                ocrRequired
+        );
     }
 
     private ParsedCandidateDraftResponse buildParsedDraft(ParseReportResponse parseReport) {
@@ -397,8 +424,15 @@ public class LoggingAgentDispatcher implements AgentDispatcher {
                     List.of("未检测到简历附件"),
                     List.of(),
                     List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
                     Map.of(),
-                    List.of(new ParseIssueResponse("WARN", "缺少简历附件，辅助决策依据不足"))
+                    List.of(new ParseIssueResponse("WARN", "缺少简历附件，辅助决策依据不足")),
+                    "NO_RESUME",
+                    true
             );
         }
         return buildParseReport(payload, extractText(asset));
@@ -442,30 +476,6 @@ public class LoggingAgentDispatcher implements AgentDispatcher {
             log.warn("Failed to extract pdf text with PDFBox", exception);
             return "";
         }
-    }
-
-    private String normalizeText(String text) {
-        if (text == null || text.isBlank()) {
-            return "";
-        }
-        List<String> normalizedLines = new ArrayList<>();
-        String previous = null;
-        for (String rawLine : text.replace("\r\n", "\n").replace('\r', '\n').split("\n")) {
-            String line = rawLine
-                    .replace('：', ':')
-                    .replace('（', '(')
-                    .replace('）', ')')
-                    .replace('\t', ' ')
-                    .trim();
-            if (line.isBlank()) {
-                continue;
-            }
-            if (!line.equals(previous)) {
-                normalizedLines.add(line);
-                previous = line;
-            }
-        }
-        return String.join("\n", normalizedLines);
     }
 
     private String buildParseSummary(

@@ -9,6 +9,8 @@ import { DepartmentFeedback } from "./pages/DepartmentFeedback";
 import { DailyReport } from "./pages/DailyReport";
 import { DepartmentPending } from "./pages/DepartmentPending";
 import { DepartmentCompleted } from "./pages/DepartmentCompleted";
+import { MyInterviews } from "./pages/MyInterviews";
+import { NotificationsPage } from "./pages/NotificationsPage";
 
 export const router = createBrowserRouter([
   {
@@ -19,6 +21,8 @@ export const router = createBrowserRouter([
       { path: "candidates", Component: CandidateList },
       { path: "candidates/new", Component: CandidateCreate },
       { path: "candidates/:id", Component: CandidateDetail },
+      { path: "interviews/mine", Component: MyInterviews },
+      { path: "notifications", Component: NotificationsPage },
       { path: "report", Component: DailyReport },
     ],
   },
