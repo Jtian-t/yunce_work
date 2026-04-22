@@ -46,15 +46,26 @@ public class LookupService {
     public List<UserLookupResponse> users(RoleType role, Long departmentId) {
         User actor = currentUserService.getRequiredUser();
         Long scopedDepartmentId = enforceDepartmentScope(actor, departmentId);
-        return userRepository.findAll().stream()
+        List<User> baseUsers = userRepository.findAll().stream()
                 .filter(User::isEnabled)
                 .filter(user -> user.getEmploymentStatus() == EmploymentStatus.ACTIVE)
                 .filter(user -> user.getRoles().contains(role))
                 .filter(user -> scopedDepartmentId == null || (user.getDepartment() != null && user.getDepartment().getId().equals(scopedDepartmentId)))
-                .filter(user -> role != RoleType.INTERVIEWER || user.isCanInterview())
                 .sorted(Comparator
                         .comparing(User::getDisplayOrder)
                         .thenComparing(user -> user.getDisplayName().toLowerCase()))
+                .toList();
+
+        List<User> effectiveUsers = baseUsers;
+        if (role == RoleType.INTERVIEWER) {
+            List<User> interviewers = baseUsers.stream()
+                    .filter(User::isCanInterview)
+                    .toList();
+            // Fallback for legacy MySQL rows where canInterview has not been initialized yet.
+            effectiveUsers = interviewers.isEmpty() ? baseUsers : interviewers;
+        }
+
+        return effectiveUsers.stream()
                 .map(this::toUserLookup)
                 .toList();
     }

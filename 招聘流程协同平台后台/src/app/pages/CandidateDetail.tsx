@@ -204,15 +204,30 @@ export function CandidateDetail() {
     if (!candidate?.department) {
       return null;
     }
-    return departments.find((department) => department.name === candidate.department)?.id ?? null;
+    const normalizedDepartment = candidate.department.trim().toLowerCase();
+    return (
+      departments.find((department) => department.name.trim().toLowerCase() === normalizedDepartment)?.id ??
+      null
+    );
   }, [candidate?.department, departments]);
   const visibleInterviewers = useMemo(() => {
-    if (!candidateDepartmentId) {
-      return interviewers;
+    if (candidateDepartmentId) {
+      const scopedById = interviewers.filter((item) => item.departmentId === candidateDepartmentId);
+      if (scopedById.length > 0) {
+        return scopedById;
+      }
     }
-    const scopedInterviewers = interviewers.filter((item) => item.departmentId === candidateDepartmentId);
-    return scopedInterviewers.length > 0 ? scopedInterviewers : interviewers;
-  }, [candidateDepartmentId, interviewers]);
+    if (candidate?.department) {
+      const normalizedDepartment = candidate.department.trim().toLowerCase();
+      const scopedByName = interviewers.filter(
+        (item) => item.departmentName?.trim().toLowerCase() === normalizedDepartment
+      );
+      if (scopedByName.length > 0) {
+        return scopedByName;
+      }
+    }
+    return interviewers;
+  }, [candidate?.department, candidateDepartmentId, interviewers]);
   const latestSuggestedInterviewer = useMemo(
     () =>
       feedbacks.find(
@@ -752,6 +767,11 @@ export function CandidateDetail() {
                         </option>
                       ))}
                     </select>
+                    {visibleInterviewers.length === 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                        当前候选人所属部门下暂无可选面试官，请先检查该部门人员配置。
+                      </div>
+                    )}
                     <select
                       value={reviewerId}
                       onChange={(event) => setReviewerId(event.target.value ? Number(event.target.value) : "")}
