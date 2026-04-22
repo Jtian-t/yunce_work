@@ -1,30 +1,26 @@
-
-import json
 import re
-from typing import Dict, Any, Type, TypeVar
+from typing import Type, TypeVar
+
 from openai import OpenAI
 from pydantic import BaseModel
+
 from src.config import settings
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 class LLMClient:
     def __init__(self):
         self.client = OpenAI(
             api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url
+            base_url=settings.llm_base_url,
         )
         self.model = settings.llm_model
 
     def _extract_json_from_text(self, text: str) -> str:
-        """从LLM输出中提取JSON内容"""
-        # 尝试找到 ```json ... ``` 块
-        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
         if json_match:
             return json_match.group(1)
-
-        # 如果没有标记，尝试直接解析整个文本
         return text.strip()
 
     def chat_with_structured_output(
@@ -32,29 +28,17 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
         output_model: Type[T],
-        max_retries: int = 3
+        max_retries: int = 3,
     ) -> T:
-        """
-        调用LLM并强制输出结构化JSON
-
-        Args:
-            system_prompt: 系统提示词
-            user_prompt: 用户提示词
-            output_model: Pydantic模型类
-            max_retries: 最大重试次数
-
-        Returns:
-            解析后的Pydantic对象
-        """
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.3
+                    temperature=0.3,
                 )
 
                 content = response.choices[0].message.content
@@ -62,17 +46,12 @@ class LLMClient:
                     raise ValueError("LLM returned empty content")
 
                 json_str = self._extract_json_from_text(content)
-                parsed = output_model.model_validate_json(json_str)
-                return parsed
-
-            except Exception as e:
+                return output_model.model_validate_json(json_str)
+            except Exception:
                 if attempt == max_retries - 1:
                     raise
-                print(f"Attempt {attempt + 1} failed: {e}, retrying...")
 
-        # 理论上不会走到这里
         raise ValueError("Failed to get structured output from LLM")
 
 
 llm_client = LLMClient()
-

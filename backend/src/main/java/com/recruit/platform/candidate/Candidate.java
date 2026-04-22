@@ -64,6 +64,9 @@ public class Candidate extends BaseEntity {
     @Column(length = 5000)
     private String projectSummary;
 
+    @Column(length = 5000)
+    private String jdSummary;
+
     @Lob
     private String parsedFieldLocksJson;
 }

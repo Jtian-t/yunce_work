@@ -110,6 +110,7 @@ export function CandidateDetail() {
     experience: "",
     skillsSummary: "",
     projectSummary: "",
+    jdSummary: "",
     departmentId: "" as number | "",
   });
   const [loading, setLoading] = useState(true);
@@ -610,6 +611,7 @@ export function CandidateDetail() {
       experience: candidate.experience ?? "",
       skillsSummary: candidate.skillsSummary ?? "",
       projectSummary: candidate.projectSummary ?? "",
+      jdSummary: candidate.jdSummary ?? "",
       departmentId: candidateDepartmentId ?? "",
     });
     setEditDialogOpen(true);
@@ -648,7 +650,7 @@ export function CandidateDetail() {
         experience: editForm.experience,
         skillsSummary: editForm.skillsSummary,
         projectSummary: editForm.projectSummary,
-        lockReason: "HR 鎵嬪伐纭",
+        lockReason: "HR 手工确认",
       });
       await updateCandidate(candidate.id, {
         name: editForm.name.trim() || candidate.name,
@@ -664,6 +666,7 @@ export function CandidateDetail() {
         experience: editForm.experience.trim(),
         skillsSummary: editForm.skillsSummary.trim(),
         projectSummary: editForm.projectSummary.trim(),
+        jdSummary: editForm.jdSummary.trim(),
       });
       setEditDialogOpen(false);
       setRefreshKey((value) => value + 1);
@@ -1513,6 +1516,10 @@ export function CandidateDetail() {
           </div>
           <textarea value={editForm.skillsSummary} onChange={(event) => setEditForm((prev) => ({ ...prev, skillsSummary: event.target.value }))} className="min-h-24 w-full rounded-lg border border-gray-300 px-3 py-2.5" placeholder="技能摘要" />
           <textarea value={editForm.projectSummary} onChange={(event) => setEditForm((prev) => ({ ...prev, projectSummary: event.target.value }))} className="min-h-24 w-full rounded-lg border border-gray-300 px-3 py-2.5" placeholder="项目摘要" />
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-gray-700">岗位要求摘要</div>
+            <textarea value={editForm.jdSummary} onChange={(event) => setEditForm((prev) => ({ ...prev, jdSummary: event.target.value }))} className="min-h-24 w-full rounded-lg border border-gray-300 px-3 py-2.5" placeholder="岗位要求摘要" />
+          </div>
           <DialogFooter>
             <button
               type="button"

@@ -163,10 +163,13 @@ public class CandidateService {
         candidate.setEducation(request.education());
         candidate.setSkillsSummary(request.skillsSummary());
         candidate.setProjectSummary(request.projectSummary());
+        candidate.setJdSummary(request.jdSummary());
         if (request.departmentId() != null) {
             Department department = departmentRepository.findById(request.departmentId())
                     .orElseThrow(() -> new NotFoundException("Department not found"));
             candidate.setDepartment(department);
+        } else {
+            candidate.setDepartment(null);
         }
         if (request.ownerId() != null) {
             User owner = userRepository.findById(request.ownerId())
@@ -212,6 +215,7 @@ public class CandidateService {
                 candidate.getEducation(),
                 candidate.getSkillsSummary(),
                 candidate.getProjectSummary(),
+                candidate.getJdSummary(),
                 asset == null ? null : toResumeResponse(asset)
         );
     }

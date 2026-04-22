@@ -32,6 +32,7 @@ export interface CandidateDetail extends Candidate {
   education?: string | null;
   skillsSummary?: string | null;
   projectSummary?: string | null;
+  jdSummary?: string | null;
   latestResume?: {
     id: number;
     originalFileName: string;
@@ -57,6 +58,7 @@ export interface CandidateUpsertPayload {
   education?: string;
   skillsSummary?: string;
   projectSummary?: string;
+  jdSummary?: string;
 }
 
 export interface DepartmentTask {
@@ -460,6 +462,7 @@ function mapCandidateDetail(detail: any): CandidateDetail {
     education: detail.education,
     skillsSummary: detail.skillsSummary,
     projectSummary: detail.projectSummary,
+    jdSummary: detail.jdSummary,
     latestResume: detail.latestResume ?? null,
   };
 }

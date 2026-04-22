@@ -1,22 +1,15 @@
-pip install -r requirements.txt
 # 简历分析 Agent
 
-基于 FastAPI 的简历分析系统，提供简历解析和分析建议两个核心接口。
+基于 FastAPI 的简历分析子服务，提供两类能力：
 
-## 功能特性
+- 简历结构化解析：把简历文本转换为候选人结构化信息
+- 候选人岗位适配分析：结合岗位要求和面试反馈，给出匹配度建议
 
-- **简历解析** - 将简历文本转换为结构化JSON数据
-- **分析建议** - 根据候选人信息、岗位要求和多轮面试反馈生成决策建议
-- **强制JSON输出** - 保证大模型输出标准格式
-- **多态反馈支持** - 支持动态传入多轮面试官评价
-
-## 快速开始
+## 启动方式
 
 ### 1. 安装依赖
 
 ```bash
-使用conda环境
-conda activate Agentic_AI
 pip install -r requirements.txt
 ```
 
@@ -24,8 +17,13 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入你的 LLM API Key
 ```
+
+需要至少配置：
+
+- `LLM_API_KEY`
+- `LLM_BASE_URL`
+- `LLM_MODEL`
 
 ### 3. 启动服务
 
@@ -33,64 +31,47 @@ cp .env.example .env
 uvicorn src.main:app --reload
 ```
 
-### 4. 访问文档
+默认地址：
 
-打开浏览器访问: http://localhost:8000/docs
+- `http://localhost:8000`
+- Swagger 文档：`http://localhost:8000/docs`
 
-## API 接口
+## API
 
-详见 [API.md](./API.md)
+### `POST /api/resume/parse`
 
-### 接口1: 简历解析
+输入：
 
-```
-POST /api/resume/parse
-Body: { "resume_text": "..." }
-Response: CandidateInfo
-```
-
-### 接口2: 分析建议
-
-```
-POST /api/resume/analyze
-Body: {
-  "candidate_info": CandidateInfo,
-  "job_requirements": "...",
-  "interview_feedbacks": [...]
+```json
+{
+  "resume_text": "..."
 }
-Response: AnalysisResult
 ```
 
-## 项目结构
+输出：结构化 `CandidateInfo`
 
-```
-parse_pdf/
-├── src/
-│   ├── main.py              # FastAPI 入口
-│   ├── config.py            # 配置管理
-│   ├── schemas.py           # Pydantic 数据模型
-│   ├── llm_client.py        # LLM 客户端
-│   ├── api/
-│   │   └── resume.py        # API 路由
-│   ├── agents/
-│   │   ├── resume_parser.py   # 简历解析 Agent
-│   │   └── recommendation.py  # 分析建议 Agent
-│   └── services/
-│       └── resume_service.py  # 业务服务
-├── tests/
-│   ├── sample_resume.txt    # 示例简历
-│   └── test_api.py          # 测试脚本
-├── PLAN.md                  # 执行计划
-├── API.md                   # API 文档
-└── requirements.txt         # 依赖
+### `POST /api/resume/analyze`
+
+输入：
+
+```json
+{
+  "candidate_info": {},
+  "job_requirements": "...",
+  "interview_feedbacks": []
+}
 ```
 
-## 测试
+输出：`AnalysisResult`
 
-```bash
-# 先启动服务
-uvicorn src.main:app --reload
+## 与 Java 主项目的关系
 
-# 使用 curl 或访问 /docs 进行测试
-```
+本目录作为 Python sidecar 服务使用：
 
+- Java Spring 主项目负责附件读取、业务编排、结果落库
+- 本服务负责调用 LLM 完成解析与适配度分析
+
+Spring 侧默认通过 HTTP 调用：
+
+- `/api/resume/parse`
+- `/api/resume/analyze`

@@ -59,7 +59,7 @@ public class AgentService {
         payload.put("resumeFileUrl", agentProperties.callbackBaseUrl() + "/api/candidates/" + candidate.getId() + "/resume/download");
         payload.put("targetPosition", candidate.getPosition());
         payload.put("department", candidate.getDepartment() == null ? null : candidate.getDepartment().getName());
-        payload.put("jdSummary", request.jdSummary());
+        payload.put("jdSummary", firstNonBlank(request.jdSummary(), candidate.getJdSummary(), candidate.getPosition()));
         payload.put("objectKey", resumeAsset.getObjectKey());
         payload.put("originalFileName", resumeAsset.getOriginalFileName());
 
@@ -117,6 +117,7 @@ public class AgentService {
         payload.put("statusCode", candidate.getStatus().getCode());
         payload.put("statusLabel", candidate.getStatus().getLabel());
         payload.put("position", candidate.getPosition());
+        payload.put("jdSummary", firstNonBlank(candidate.getJdSummary(), candidate.getPosition()));
         payload.put("nextAction", candidate.getNextAction());
         payload.put("department", candidate.getDepartment() == null ? null : candidate.getDepartment().getName());
         payload.put("resumeFileUrl", agentProperties.callbackBaseUrl() + "/api/candidates/" + candidate.getId() + "/resume/preview");

@@ -21,7 +21,8 @@ record CandidateUpsertRequest(
         String experience,
         String education,
         String skillsSummary,
-        String projectSummary
+        String projectSummary,
+        String jdSummary
 ) {
 }
 
@@ -59,6 +60,7 @@ record CandidateDetailResponse(
         String education,
         String skillsSummary,
         String projectSummary,
+        String jdSummary,
         ResumeAssetResponse latestResume
 ) {
 }
