@@ -136,6 +136,15 @@ export interface InterviewEvaluation {
   createdAt: string;
 }
 
+export interface SubmitInterviewEvaluationPayload {
+  result: "PASS" | "FAIL";
+  score: number;
+  evaluation: string;
+  strengths?: string;
+  weaknesses?: string;
+  suggestion?: string;
+}
+
 export interface InterviewPlan {
   id: number;
   candidateId: number;
@@ -355,6 +364,28 @@ interface DataContextType {
   loadCandidateFeedbacks: (id: number) => Promise<CandidateFeedback[]>;
   loadCandidateInterviews: (id: number) => Promise<InterviewPlan[]>;
   loadMyInterviews: (query?: InterviewQuery) => Promise<InterviewPlan[]>;
+  loadInterviewPlan: (interviewId: number) => Promise<InterviewPlan>;
+  updateInterviewPlan: (
+    interviewId: number,
+    payload: {
+      interviewerId: number;
+      roundLabel: string;
+      scheduledAt: string;
+      endsAt: string;
+      meetingType?: "ONSITE" | "TENCENT_MEETING" | "PHONE";
+      meetingUrl?: string;
+      meetingId?: string;
+      meetingPassword?: string;
+      interviewStageCode?: string;
+      interviewStageLabel?: string;
+      departmentId?: number;
+      notes?: string;
+    }
+  ) => Promise<InterviewPlan>;
+  submitInterviewEvaluation: (
+    interviewId: number,
+    payload: SubmitInterviewEvaluationPayload
+  ) => Promise<InterviewEvaluation>;
   createCandidate: (payload: CandidateUpsertPayload) => Promise<CandidateDetail>;
   updateCandidate: (id: number, payload: CandidateUpsertPayload) => Promise<CandidateDetail>;
   uploadResume: (candidateId: number, file: File) => Promise<void>;
@@ -486,6 +517,20 @@ function mapInterviewPlan(plan: any): InterviewPlan {
   };
 }
 
+function mapInterviewEvaluation(evaluation: any): InterviewEvaluation {
+  return {
+    id: evaluation.id,
+    interviewer: evaluation.interviewer,
+    result: evaluation.result,
+    score: evaluation.score,
+    evaluation: evaluation.evaluation,
+    strengths: evaluation.strengths ?? null,
+    weaknesses: evaluation.weaknesses ?? null,
+    suggestion: evaluation.suggestion ?? null,
+    createdAt: evaluation.createdAt,
+  };
+}
+
 async function bootstrapToken() {
   const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
     method: "POST",
@@ -559,7 +604,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (!response.ok) {
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("application/json")) {
-        const payload = await response.json();
+        const rawPayload = await response.text();
+        const payload = rawPayload ? JSON.parse(rawPayload) : {};
         const error = new Error(payload.message ?? `请求失败: ${response.status}`) as Error & { status?: number };
         error.status = response.status;
         throw error;
@@ -573,7 +619,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return undefined as T;
     }
 
-    return response.json() as Promise<T>;
+    const responseText = await response.text();
+    if (!responseText.trim()) {
+      return undefined as T;
+    }
+
+    return JSON.parse(responseText) as T;
   }
 
   async function apiRequestOptional<T>(path: string, init?: RequestInit): Promise<T | null> {
@@ -688,6 +739,45 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const suffix = params.toString() ? `?${params.toString()}` : "";
     const plans = await apiRequest<any[]>(`/api/interviews/mine${suffix}`);
     return plans.map(mapInterviewPlan);
+  }
+
+  async function loadInterviewPlan(interviewId: number) {
+    const plan = await apiRequest<any>(`/api/interviews/${interviewId}`);
+    return mapInterviewPlan(plan);
+  }
+
+  async function updateInterviewPlan(
+    interviewId: number,
+    payload: {
+      interviewerId: number;
+      roundLabel: string;
+      scheduledAt: string;
+      endsAt: string;
+      meetingType?: "ONSITE" | "TENCENT_MEETING" | "PHONE";
+      meetingUrl?: string;
+      meetingId?: string;
+      meetingPassword?: string;
+      interviewStageCode?: string;
+      interviewStageLabel?: string;
+      departmentId?: number;
+      notes?: string;
+    }
+  ) {
+    const plan = await apiRequest<any>(`/api/interviews/${interviewId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    await refreshData();
+    return mapInterviewPlan(plan);
+  }
+
+  async function submitInterviewEvaluation(interviewId: number, payload: SubmitInterviewEvaluationPayload) {
+    const evaluation = await apiRequest<any>(`/api/interviews/${interviewId}/evaluations`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await refreshData();
+    return mapInterviewEvaluation(evaluation);
   }
 
   async function createCandidate(payload: CandidateUpsertPayload) {
@@ -945,6 +1035,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       loadCandidateFeedbacks,
       loadCandidateInterviews,
       loadMyInterviews,
+      loadInterviewPlan,
+      updateInterviewPlan,
+      submitInterviewEvaluation,
       createCandidate,
       updateCandidate,
       uploadResume,

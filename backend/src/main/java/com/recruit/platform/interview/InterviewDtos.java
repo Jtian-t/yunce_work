@@ -26,6 +26,22 @@ record CreateInterviewPlanRequest(
 ) {
 }
 
+record UpdateInterviewPlanRequest(
+        @NotNull Long interviewerId,
+        @NotBlank String roundLabel,
+        @NotNull OffsetDateTime scheduledAt,
+        @NotNull OffsetDateTime endsAt,
+        InterviewMeetingType meetingType,
+        String meetingUrl,
+        String meetingId,
+        String meetingPassword,
+        String interviewStageCode,
+        String interviewStageLabel,
+        Long departmentId,
+        String notes
+) {
+}
+
 record SubmitInterviewEvaluationRequest(
         @NotNull InterviewResult result,
         @NotNull @Min(0) @Max(100) Integer score,

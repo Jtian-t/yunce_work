@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ExternalLink, FileSearch, Users, ClipboardCheck, CalendarClock } from "lucide-react";
+import {
+  CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
+  ExternalLink,
+  FileSearch,
+  Users,
+} from "lucide-react";
 import { Link } from "react-router";
 import { useData, type DepartmentMember, type InterviewPlan, type LookupDepartment } from "../context/DataContext";
 
@@ -15,6 +23,7 @@ export function MyInterviews() {
   const [interviews, setInterviews] = useState<InterviewPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted] = useState(false);
 
   const roles = currentUser?.roles ?? [];
   const canCoordination = roles.includes("HR") || roles.includes("DEPARTMENT_LEAD");
@@ -129,6 +138,8 @@ export function MyInterviews() {
   }, [interviews]);
 
   const pendingCount = interviews.filter((item) => !item.evaluationSubmitted).length;
+  const pendingInterviews = useMemo(() => interviews.filter((item) => !item.evaluationSubmitted), [interviews]);
+  const completedInterviews = useMemo(() => interviews.filter((item) => item.evaluationSubmitted), [interviews]);
   const selectedDepartmentName = departments.find((item) => item.id === Number(selectedDepartmentId))?.name ?? "全部部门";
 
   return (
@@ -214,45 +225,92 @@ export function MyInterviews() {
         ) : interviews.length === 0 ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500">当前条件下暂无面试任务</div>
         ) : (
-          interviews.map((interview) => (
-            <div key={interview.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="text-lg font-semibold text-gray-900">{interview.candidateName ?? "候选人"}</div>
-                  <div className="mt-1 text-sm text-gray-600">
-                    {interview.position ?? "-"} · {interview.interviewStageLabel ?? interview.roundLabel}
-                  </div>
-                  <div className="mt-1 text-sm text-gray-600">{new Date(interview.scheduledAt).toLocaleString("zh-CN")}</div>
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
-                    <span>面试官：{interview.interviewer}</span>
-                    {interview.departmentName && <span>部门：{interview.departmentName}</span>}
-                    <span>{interview.evaluationSubmitted ? "已提交评价" : "待提交评价"}</span>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {interview.meetingUrl && (
-                    <a
-                      href={interview.meetingUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                      进入会议
-                    </a>
-                  )}
-                  <Link
-                    to={`/candidates/${interview.candidateId}`}
-                    className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    <FileSearch className="h-4 w-4" />
-                    候选人详情
-                  </Link>
-                </div>
+          <>
+            {pendingInterviews.length > 0 && (
+              <div className="space-y-4">
+                {pendingInterviews.map((interview) => (
+                  <InterviewCard key={interview.id} interview={interview} highlight />
+                ))}
               </div>
-            </div>
-          ))
+            )}
+
+            {completedInterviews.length > 0 && (
+              <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setShowCompleted((current) => !current)}
+                  className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-gray-50"
+                >
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">已完成面试</div>
+                    <div className="mt-1 text-sm text-gray-500">共 {completedInterviews.length} 场，点击展开查看</div>
+                  </div>
+                  {showCompleted ? (
+                    <ChevronDown className="h-4 w-4 text-gray-400" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-gray-400" />
+                  )}
+                </button>
+                {showCompleted && (
+                  <div className="space-y-4 border-t border-gray-100 px-5 py-4">
+                    {completedInterviews.map((interview) => (
+                      <InterviewCard key={interview.id} interview={interview} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function InterviewCard({ interview, highlight = false }: { interview: InterviewPlan; highlight?: boolean }) {
+  return (
+    <div
+      className={`rounded-2xl border bg-white p-5 shadow-sm ${
+        highlight ? "border-amber-300 bg-amber-50/40 shadow-amber-100" : "border-gray-200"
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className={`text-lg font-semibold ${highlight ? "text-amber-900" : "text-gray-900"}`}>
+            {interview.candidateName ?? "候选人"}
+          </div>
+          <div className={`mt-1 text-sm ${highlight ? "font-semibold text-amber-800" : "text-gray-600"}`}>
+            {interview.position ?? "-"} · {interview.interviewStageLabel ?? interview.roundLabel}
+          </div>
+          <div className={`mt-1 text-sm ${highlight ? "font-medium text-amber-700" : "text-gray-600"}`}>
+            {new Date(interview.scheduledAt).toLocaleString("zh-CN")}
+          </div>
+          <div className={`mt-2 flex flex-wrap gap-3 text-xs ${highlight ? "font-semibold text-amber-700" : "text-gray-500"}`}>
+            <span>面试官：{interview.interviewer}</span>
+            {interview.departmentName && <span>部门：{interview.departmentName}</span>}
+            <span>{interview.evaluationSubmitted ? "已提交评价" : "待提交评价"}</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {!interview.evaluationSubmitted && interview.meetingUrl && (
+            <a
+              href={interview.meetingUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100"
+            >
+              <ExternalLink className="h-4 w-4" />
+              进入会议
+            </a>
+          )}
+          <Link
+            to={`/interviews/${interview.id}`}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <FileSearch className="h-4 w-4" />
+            面试详情
+          </Link>
+        </div>
       </div>
     </div>
   );

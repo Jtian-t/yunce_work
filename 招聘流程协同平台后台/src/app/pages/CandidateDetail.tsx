@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import {
   ArrowLeft,
   Calendar,
+  ChevronDown,
+  ChevronRight,
   Download,
   FileSearch,
   History,
@@ -48,6 +50,8 @@ function formatConfidence(value?: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+const INTERVIEW_ROUNDS = ["一面", "二面", "三面", "HR面", "终面"] as const;
+
 export function CandidateDetail() {
   const { id } = useParams();
   const {
@@ -60,6 +64,8 @@ export function CandidateDetail() {
     loadDepartments,
     loadUsersByRole,
     advanceCandidate,
+    updateCandidate,
+    updateInterviewPlan,
     createParseJob,
     loadLatestParseJobOptional,
     createDecisionJob,
@@ -104,6 +110,7 @@ export function CandidateDetail() {
     experience: "",
     skillsSummary: "",
     projectSummary: "",
+    departmentId: "" as number | "",
   });
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -111,6 +118,8 @@ export function CandidateDetail() {
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [expandedInterviewIds, setExpandedInterviewIds] = useState<number[]>([]);
+  const [expandedCompletedInterviewIds, setExpandedCompletedInterviewIds] = useState<number[]>([]);
 
   useEffect(() => {
     if (!id) {
@@ -211,10 +220,19 @@ export function CandidateDetail() {
     );
   }, [candidate?.department, departments]);
   const visibleInterviewers = useMemo(() => {
+    const currentRoundInterviewerId =
+      interviews.find((item) => (item.interviewStageLabel ?? item.roundLabel) === roundLabel)?.interviewerId ??
+      interviews.find((item) => item.roundLabel === roundLabel)?.interviewerId ??
+      null;
+    const pinnedInterviewer = currentRoundInterviewerId
+      ? interviewers.find((item) => item.id === currentRoundInterviewerId) ?? null
+      : null;
     if (candidateDepartmentId) {
       const scopedById = interviewers.filter((item) => item.departmentId === candidateDepartmentId);
       if (scopedById.length > 0) {
-        return scopedById;
+        return pinnedInterviewer && !scopedById.some((item) => item.id === pinnedInterviewer.id)
+          ? [...scopedById, pinnedInterviewer]
+          : scopedById;
       }
     }
     if (candidate?.department) {
@@ -223,11 +241,19 @@ export function CandidateDetail() {
         (item) => item.departmentName?.trim().toLowerCase() === normalizedDepartment
       );
       if (scopedByName.length > 0) {
-        return scopedByName;
+        return pinnedInterviewer && !scopedByName.some((item) => item.id === pinnedInterviewer.id)
+          ? [...scopedByName, pinnedInterviewer]
+          : scopedByName;
       }
     }
-    return interviewers;
-  }, [candidate?.department, candidateDepartmentId, interviewers]);
+    return pinnedInterviewer && !interviewers.some((item) => item.id === pinnedInterviewer.id)
+      ? [...interviewers, pinnedInterviewer]
+      : interviewers;
+  }, [candidate?.department, candidateDepartmentId, interviewers, interviews, roundLabel]);
+  const selectedInterviewer = useMemo(
+    () => visibleInterviewers.find((item) => item.id === Number(interviewerId)) ?? null,
+    [interviewerId, visibleInterviewers]
+  );
   const latestSuggestedInterviewer = useMemo(
     () =>
       feedbacks.find(
@@ -237,6 +263,46 @@ export function CandidateDetail() {
       ) ?? null,
     [feedbacks]
   );
+  const sortedInterviews = useMemo(
+    () =>
+      [...interviews].sort(
+        (left, right) => new Date(right.scheduledAt).getTime() - new Date(left.scheduledAt).getTime()
+      ),
+    [interviews]
+  );
+  const completedInterviews = useMemo(
+    () => sortedInterviews.filter((item) => item.evaluationSubmitted),
+    [sortedInterviews]
+  );
+  const latestCompletedInterview = completedInterviews[0] ?? null;
+  const latestInterview = sortedInterviews[0] ?? null;
+  const defaultRoundLabel = useMemo(() => {
+    if (!latestCompletedInterview && !latestInterview) {
+      return INTERVIEW_ROUNDS[0];
+    }
+    if (latestCompletedInterview) {
+      const latestRound = latestCompletedInterview.interviewStageLabel ?? latestCompletedInterview.roundLabel;
+      const currentIndex = INTERVIEW_ROUNDS.indexOf(latestRound as (typeof INTERVIEW_ROUNDS)[number]);
+      if (currentIndex >= 0 && currentIndex < INTERVIEW_ROUNDS.length - 1) {
+        return INTERVIEW_ROUNDS[currentIndex + 1];
+      }
+      return latestRound;
+    }
+
+    if (latestInterview && !latestInterview.evaluationSubmitted) {
+      return latestInterview.interviewStageLabel ?? latestInterview.roundLabel;
+    }
+
+    return INTERVIEW_ROUNDS[0];
+  }, [latestCompletedInterview, latestInterview]);
+  const currentRoundInterview = useMemo(
+    () =>
+      interviews.find((item) => (item.interviewStageLabel ?? item.roundLabel) === roundLabel) ??
+      interviews.find((item) => item.roundLabel === roundLabel) ??
+      null,
+    [interviews, roundLabel]
+  );
+  const canEditCurrentRoundInterview = currentRoundInterview != null && !currentRoundInterview.evaluationSubmitted;
 
   useEffect(() => {
     if (candidateDepartmentId == null) {
@@ -245,7 +311,7 @@ export function CandidateDetail() {
     let active = true;
     loadUsersByRole("INTERVIEWER", candidateDepartmentId)
       .then((items) => {
-        if (active) {
+        if (active && items.length > 0) {
           setInterviewers(items);
         }
       })
@@ -268,6 +334,67 @@ export function CandidateDetail() {
       }
     }
   }, [interviewerId, latestSuggestedInterviewer, visibleInterviewers]);
+
+  useEffect(() => {
+    setRoundLabel((current) => {
+      if (!current) {
+        return defaultRoundLabel;
+      }
+      if (current === defaultRoundLabel) {
+        return current;
+      }
+      if (currentRoundInterview && !currentRoundInterview.evaluationSubmitted) {
+        return current;
+      }
+      return defaultRoundLabel;
+    });
+  }, [currentRoundInterview, defaultRoundLabel]);
+
+  useEffect(() => {
+    if (!latestInterview) {
+      setExpandedInterviewIds([]);
+      return;
+    }
+    setExpandedInterviewIds((current) => (current.length > 0 ? current : [latestInterview.id]));
+  }, [latestInterview]);
+
+  useEffect(() => {
+    if (!latestCompletedInterview) {
+      setExpandedCompletedInterviewIds([]);
+      return;
+    }
+    setExpandedCompletedInterviewIds((current) => (current.length > 0 ? current : [latestCompletedInterview.id]));
+  }, [latestCompletedInterview]);
+
+  useEffect(() => {
+    if (currentRoundInterview) {
+      setInterviewerId(currentRoundInterview.interviewerId ?? "");
+      setScheduledAt(toLocalInputValue(new Date(currentRoundInterview.scheduledAt)));
+      setEndsAt(toLocalInputValue(new Date(currentRoundInterview.endsAt)));
+      setMeetingType(
+        (currentRoundInterview.meetingType as "ONSITE" | "TENCENT_MEETING" | "PHONE" | null) ?? "TENCENT_MEETING"
+      );
+      setMeetingUrl(currentRoundInterview.meetingUrl ?? "");
+      setMeetingId(currentRoundInterview.meetingId ?? "");
+      setMeetingPassword(currentRoundInterview.meetingPassword ?? "");
+      setInterviewNotes(currentRoundInterview.notes ?? "");
+      return;
+    }
+
+    setInterviewerId((current) => {
+      if (current && visibleInterviewers.some((item) => item.id === Number(current))) {
+        return current;
+      }
+      return "";
+    });
+    setScheduledAt(toLocalInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
+    setEndsAt(toLocalInputValue(new Date(Date.now() + 25 * 60 * 60 * 1000)));
+    setMeetingType("TENCENT_MEETING");
+    setMeetingUrl("");
+    setMeetingId("");
+    setMeetingPassword("");
+    setInterviewNotes("");
+  }, [currentRoundInterview, roundLabel, visibleInterviewers]);
 
   const skillList = parseReport?.extractedSkills?.length
     ? parseReport.extractedSkills
@@ -312,6 +439,58 @@ export function CandidateDetail() {
       return "ROUND_2";
     }
     return "ROUND_1";
+  }
+
+  async function handleSaveInterview() {
+    if (!candidate || !interviewerId) {
+      return;
+    }
+
+    setActionLoading(true);
+    setError(null);
+    try {
+      const interviewDepartmentId = selectedInterviewer?.departmentId ?? candidateDepartmentId ?? undefined;
+      const payload = {
+        interviewerId: Number(interviewerId),
+        roundLabel,
+        scheduledAt: new Date(scheduledAt).toISOString(),
+        endsAt: new Date(endsAt).toISOString(),
+        meetingType,
+        meetingUrl,
+        meetingId,
+        meetingPassword,
+        interviewStageCode: resolveInterviewStageCode(roundLabel),
+        interviewStageLabel: roundLabel,
+        departmentId: interviewDepartmentId,
+        notes: interviewNotes,
+      };
+
+      if (canEditCurrentRoundInterview && currentRoundInterview) {
+        await updateInterviewPlan(currentRoundInterview.id, payload);
+      } else {
+        await advanceCandidate(candidate.id, {
+          action: "SCHEDULE_INTERVIEW",
+          interviewerId: Number(interviewerId),
+          roundLabel,
+          scheduledAt: payload.scheduledAt,
+          endsAt: payload.endsAt,
+          meetingType,
+          meetingUrl,
+          meetingId,
+          meetingPassword,
+          interviewStageCode: payload.interviewStageCode,
+          interviewStageLabel: roundLabel,
+          interviewDepartmentId,
+          interviewNotes,
+        });
+      }
+
+      setRefreshKey((value) => value + 1);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "保存面试安排失败");
+    } finally {
+      setActionLoading(false);
+    }
   }
 
   async function waitForDecision(candidateId: number) {
@@ -412,7 +591,7 @@ export function CandidateDetail() {
       await applyParsedProfile(candidate.id);
       setRefreshKey((value) => value + 1);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "解析结果回填失败");
+      setError(requestError instanceof Error ? requestError.message : "解析结果回显失败");
     } finally {
       setActionLoading(false);
     }
@@ -431,6 +610,7 @@ export function CandidateDetail() {
       experience: candidate.experience ?? "",
       skillsSummary: candidate.skillsSummary ?? "",
       projectSummary: candidate.projectSummary ?? "",
+      departmentId: candidateDepartmentId ?? "",
     });
     setEditDialogOpen(true);
   }
@@ -460,16 +640,54 @@ export function CandidateDetail() {
     setError(null);
     try {
       await saveManualParsedFields(candidate.id, {
-        ...editForm,
-        lockReason: "HR 手工确认",
+        name: editForm.name,
+        phone: editForm.phone,
+        email: editForm.email,
+        location: editForm.location,
+        education: editForm.education,
+        experience: editForm.experience,
+        skillsSummary: editForm.skillsSummary,
+        projectSummary: editForm.projectSummary,
+        lockReason: "HR 鎵嬪伐纭",
+      });
+      await updateCandidate(candidate.id, {
+        name: editForm.name.trim() || candidate.name,
+        position: candidate.position,
+        departmentId: editForm.departmentId === "" ? null : Number(editForm.departmentId),
+        source: candidate.source,
+        submittedDate: candidate.submittedDate,
+        nextAction: candidate.nextAction,
+        phone: editForm.phone.trim(),
+        email: editForm.email.trim(),
+        location: editForm.location.trim(),
+        education: editForm.education.trim(),
+        experience: editForm.experience.trim(),
+        skillsSummary: editForm.skillsSummary.trim(),
+        projectSummary: editForm.projectSummary.trim(),
       });
       setEditDialogOpen(false);
       setRefreshKey((value) => value + 1);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "保存基础信息失败");
+      setError(requestError instanceof Error ? requestError.message : "保存简历信息失败");
     } finally {
       setActionLoading(false);
     }
+  }
+
+  function toggleInterviewExpanded(interviewId: number) {
+    setExpandedInterviewIds((current) =>
+      current.includes(interviewId)
+        ? current.filter((item) => item !== interviewId)
+        : [...current, interviewId]
+    );
+  }
+
+  function toggleCompletedInterviewExpanded(interviewId: number) {
+    setExpandedCompletedInterviewIds((current) =>
+      current.includes(interviewId)
+        ? current.filter((item) => item !== interviewId)
+        : [...current, interviewId]
+    );
   }
 
   if (loading) {
@@ -520,7 +738,7 @@ export function CandidateDetail() {
                 className="mt-3 inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 <Pencil className="h-4 w-4" />
-                编辑基础信息
+                编辑简历信息
               </button>
             </div>
 
@@ -582,7 +800,7 @@ export function CandidateDetail() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">简历解析洞察</h3>
-                <p className="mt-1 text-sm text-gray-500">支持重新解析并保留最新结构化结果，供后续流程与辅助决策复用。</p>
+                <p className="mt-1 text-sm text-gray-500">支持重新解析并保留最新结构化结果，供后续流程与辅助决策使用。</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -606,12 +824,12 @@ export function CandidateDetail() {
             </div>
 
             <label className="mt-4 block text-sm text-gray-700">
-              解析关注点（可选）
+              解析关注点(可选)
               <input
                 value={parseHint}
                 onChange={(event) => setParseHint(event.target.value)}
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5"
-                placeholder="例如：优先识别 Java 后端年限、项目职责和城市"
+                placeholder="例如：优先识别 Java 后端年限、项目经验和城市"
               />
             </label>
 
@@ -621,13 +839,14 @@ export function CandidateDetail() {
                   <div className="text-sm font-medium text-green-900">最新解析摘要</div>
                   <div className="mt-1 text-sm text-green-800">{parseReport.summary}</div>
                   <div className="mt-2 text-xs text-green-700">
-                    模式：{parseReport.extractionMode ?? "UNKNOWN"} {parseReport.ocrRequired ? "· 需要 OCR" : ""}
+                    模式：{parseReport.extractionMode ?? "UNKNOWN"}
+                    {parseReport.ocrRequired ? " · 需要 OCR" : ""}
                   </div>
                 </div>
 
                 {parseReport.highlights.length > 0 && (
                   <div>
-                    <div className="mb-2 text-sm font-medium text-gray-700">解析亮点</div>
+                      <div className="mb-2 text-sm font-medium text-gray-700">解析亮点</div>
                     <div className="flex flex-wrap gap-2">
                       {parseReport.highlights.map((highlight) => (
                         <span key={highlight} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
@@ -644,7 +863,7 @@ export function CandidateDetail() {
                       <div className="text-xs font-medium uppercase tracking-wide text-gray-500">{fieldKey}</div>
                       <div className="mt-1 text-sm font-medium text-gray-900">{fieldValue.value}</div>
                       <div className="mt-1 text-xs text-gray-500">
-                        置信度 {formatConfidence(fieldValue.confidence) ?? "-"} · 来源 {fieldValue.source}
+                        置信度：{formatConfidence(fieldValue.confidence) ?? "-"} · 来源 {fieldValue.source}
                       </div>
                     </div>
                   ))}
@@ -663,8 +882,7 @@ export function CandidateDetail() {
               </div>
             ) : (
               <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-                暂无结构化解析结果。上传简历后可在这里查看摘要、字段置信度与待确认项。
-              </div>
+                无结构化解析结果。上传简历后可在这里查看摘要、学历信息与待确认项。              </div>
             )}
           </div>
 
@@ -739,7 +957,7 @@ export function CandidateDetail() {
         <div className="space-y-6">
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900">HR 推进一步</h3>
-            <p className="mt-1 text-sm text-gray-500">根据当前状态展示合法动作，所有流转都会写入时间线。</p>
+            <p className="mt-1 text-sm text-gray-500">根据当前状态展示合法动作，所有流程都会写入时间线。</p>
 
             <div className="mt-5 space-y-5">
               {(candidate.statusCode === "NEW" || candidate.statusCode === "TIMEOUT" || candidate.statusCode === "IN_DEPT_REVIEW") && (
@@ -824,20 +1042,77 @@ export function CandidateDetail() {
 
               {canScheduleInterview && (
                 <div className="rounded-xl border border-gray-200 p-4">
+                  {latestCompletedInterview && (
+                    <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                      {latestCompletedInterview.interviewer} ·{" "}
+                      {new Date(latestCompletedInterview.scheduledAt).toLocaleString("zh-CN")}
+                    </div>
+                  )}
+                  {completedInterviews.length > 0 && (
+                    <div className="mb-4 space-y-2">
+                      {completedInterviews.map((interview) => {
+                        const expanded = expandedCompletedInterviewIds.includes(interview.id);
+                        const label = interview.interviewStageLabel ?? interview.roundLabel;
+                        const evaluation = interview.evaluations[0];
+                        const evaluationTime = evaluation?.createdAt ?? null;
+                        return (
+                          <div key={`completed-${interview.id}`} className="rounded-lg border border-gray-300 bg-gray-50">
+                            <button
+                              type="button"
+                              onClick={() => toggleCompletedInterviewExpanded(interview.id)}
+                              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-100"
+                            >
+                              <div className="font-medium text-gray-900">
+                                {label} - 已完成
+                                {evaluationTime ? `（评估时间：${new Date(evaluationTime).toLocaleString("zh-CN")}）` : ""}
+                              </div>
+                              {expanded ? (
+                                <ChevronDown className="h-4 w-4 text-gray-500" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-gray-500" />
+                              )}
+                            </button>
+                            {expanded && (
+                              <div className="border-t border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+                                <div>面试官：{interview.interviewer}</div>
+                                <div className="mt-1">
+                                  时间：{new Date(interview.scheduledAt).toLocaleString("zh-CN")} - {new Date(interview.endsAt).toLocaleString("zh-CN")}
+                                </div>
+                                {evaluation ? (
+                                  <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                    <div className="font-medium text-gray-900">
+                                      评分 {evaluation.score} · {evaluation.result}
+                                    </div>
+                                    <div className="mt-1">{evaluation.evaluation}</div>
+                                    {evaluation.strengths && <div className="mt-1">优点：{evaluation.strengths}</div>}
+                                    {evaluation.weaknesses && <div className="mt-1">风险点：{evaluation.weaknesses}</div>}
+                                    {evaluation.suggestion && <div className="mt-1 text-blue-700">建议：{evaluation.suggestion}</div>}
+                                  </div>
+                                ) : (
+                                  <div className="mt-3 text-gray-500">当前还没有面试评价</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   <div className="mb-3 font-medium text-gray-900">
-                    {candidate.statusCode === "INTERVIEW_PASSED" ? "安排下一轮面试" : "安排面试"}
+                    {canEditCurrentRoundInterview ? "编辑面试安排" : candidate.statusCode === "INTERVIEW_PASSED" ? "安排" + roundLabel : "安排面试"}
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <select
                       value={interviewerId}
                       onChange={(event) => setInterviewerId(event.target.value ? Number(event.target.value) : "")}
-                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                     >
                       <option value="">选择面试官</option>
                       {visibleInterviewers.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.displayName}
-                          {item.departmentName ? ` · ${item.departmentName}` : ""}
+                          {item.departmentName ? " | " + item.departmentName : ""}
                         </option>
                       ))}
                     </select>
@@ -856,18 +1131,21 @@ export function CandidateDetail() {
                       type="datetime-local"
                       value={scheduledAt}
                       onChange={(event) => setScheduledAt(event.target.value)}
-                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                     />
                     <input
                       type="datetime-local"
                       value={endsAt}
                       onChange={(event) => setEndsAt(event.target.value)}
-                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                     />
                     <select
                       value={meetingType}
                       onChange={(event) => setMeetingType(event.target.value as "ONSITE" | "TENCENT_MEETING" | "PHONE")}
-                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                     >
                       <option value="TENCENT_MEETING">腾讯会议</option>
                       <option value="ONSITE">现场面试</option>
@@ -876,51 +1154,43 @@ export function CandidateDetail() {
                     <input
                       value={meetingUrl}
                       onChange={(event) => setMeetingUrl(event.target.value)}
-                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                       placeholder="会议链接"
                     />
                     <input
                       value={meetingId}
                       onChange={(event) => setMeetingId(event.target.value)}
-                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                       placeholder="会议号"
                     />
                     <input
                       value={meetingPassword}
                       onChange={(event) => setMeetingPassword(event.target.value)}
-                      className="rounded-lg border border-gray-300 px-3 py-2.5"
+                      disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                      className="rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                       placeholder="会议密码"
                     />
                   </div>
                   <textarea
                     value={interviewNotes}
                     onChange={(event) => setInterviewNotes(event.target.value)}
-                    className="mt-3 min-h-20 w-full rounded-lg border border-gray-300 px-3 py-2.5"
+                    disabled={Boolean(currentRoundInterview?.evaluationSubmitted)}
+                    className="mt-3 min-h-20 w-full rounded-lg border border-gray-300 px-3 py-2.5 disabled:bg-gray-100"
                     placeholder="面试备注"
                   />
                   <button
                     type="button"
-                    disabled={actionLoading || !interviewerId}
-                    onClick={() =>
-                      void runAction({
-                        action: "SCHEDULE_INTERVIEW",
-                        interviewerId: Number(interviewerId),
-                        roundLabel,
-                        scheduledAt: new Date(scheduledAt).toISOString(),
-                        endsAt: new Date(endsAt).toISOString(),
-                        meetingType,
-                        meetingUrl,
-                        meetingId,
-                        meetingPassword,
-                        interviewStageCode: resolveInterviewStageCode(roundLabel),
-                        interviewStageLabel: roundLabel,
-                        interviewDepartmentId: candidateDepartmentId ?? undefined,
-                        interviewNotes,
-                      })
-                    }
+                    disabled={actionLoading || !interviewerId || Boolean(currentRoundInterview?.evaluationSubmitted)}
+                    onClick={() => void handleSaveInterview()}
                     className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {candidate.statusCode === "INTERVIEW_PASSED" ? "安排下一轮" : "安排面试"}
+                    {canEditCurrentRoundInterview
+                      ? "编辑面试安排"
+                      : candidate.statusCode === "INTERVIEW_PASSED"
+                      ? `安排${roundLabel}`
+                      : "安排面试"}
                   </button>
                 </div>
               )}
@@ -1076,18 +1346,49 @@ export function CandidateDetail() {
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900">面试进展</h3>
             <div className="mt-4 space-y-3">
-              {interviews.length > 0 ? (
-                interviews.map((interview) => (
-                  <div key={`progress-${interview.id}`} className="rounded-lg border border-gray-200 p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="font-medium text-gray-900">{interview.interviewStageLabel ?? interview.roundLabel}</div>
-                      <span className="text-xs text-gray-500">{interview.evaluationSubmitted ? "已评价" : "待评价"}</span>
+              {sortedInterviews.length > 0 ? (
+                sortedInterviews.map((interview) => {
+                  const expanded = expandedInterviewIds.includes(interview.id);
+                  const label = interview.interviewStageLabel ?? interview.roundLabel;
+                  const interviewStatusText = interview.evaluationSubmitted ? "已评价" : "待评价";
+                  return (
+                    <div key={`progress-${interview.id}`} className="rounded-lg border border-gray-200">
+                      <button
+                        type="button"
+                        onClick={() => toggleInterviewExpanded(interview.id)}
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50"
+                      >
+                        <div>
+                          <div className="font-medium text-gray-900">{label}</div>
+                          <div className="mt-1 text-sm text-gray-600">
+                            {expanded
+                              ? `${interview.status} 路 ${new Date(interview.scheduledAt).toLocaleString("zh-CN")}`
+                              : `${label} · ${interviewStatusText}`}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-gray-500">{interviewStatusText}</span>
+                          {expanded ? (
+                            <ChevronDown className="h-4 w-4 text-gray-400" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                          )}
+                        </div>
+                      </button>
+                      {expanded && (
+                        <div className="border-t border-gray-100 px-4 py-3 text-sm text-gray-700">
+                          <div>面试官：{interview.interviewer}</div>
+                          <div className="mt-1">
+                            时间：{new Date(interview.scheduledAt).toLocaleString("zh-CN")} -{" "}
+                            {new Date(interview.endsAt).toLocaleString("zh-CN")}
+                          </div>
+                          <div className="mt-1">状态：{interview.status}</div>
+                          {interview.notes && <div className="mt-1">备注：{interview.notes}</div>}
+                        </div>
+                      )}
                     </div>
-                    <div className="mt-1 text-sm text-gray-600">
-                      {interview.status} · {new Date(interview.scheduledAt).toLocaleString("zh-CN")}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="text-sm text-gray-500">暂无面试进展</div>
               )}
@@ -1097,50 +1398,80 @@ export function CandidateDetail() {
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900">面试记录</h3>
             <div className="mt-4 space-y-4">
-              {interviews.length > 0 ? (
-                interviews.map((interview) => (
-                  <div key={interview.id} className="rounded-lg border border-gray-200 p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold text-gray-900">{interview.interviewStageLabel ?? interview.roundLabel}</div>
-                        <div className="mt-1 text-sm text-gray-600">
-                          面试官：{interview.interviewer} · {new Date(interview.scheduledAt).toLocaleString("zh-CN")}
+              {sortedInterviews.length > 0 ? (
+                sortedInterviews.map((interview) => {
+                  const expanded = expandedInterviewIds.includes(interview.id);
+                  const label = interview.interviewStageLabel ?? interview.roundLabel;
+                  const interviewStatusText = interview.evaluationSubmitted ? "点击展开查看详情" : "待面试评价";
+                  return (
+                    <div key={interview.id} className="rounded-lg border border-gray-200">
+                      <button
+                        type="button"
+                        onClick={() => toggleInterviewExpanded(interview.id)}
+                        className="flex w-full items-start justify-between gap-3 px-4 py-4 text-left hover:bg-gray-50"
+                      >
+                        <div>
+                          <div className="font-semibold text-gray-900">{label}</div>
+                          <div className="mt-1 text-sm text-gray-600">
+                            {expanded
+                              ? `面试官：${interview.interviewer} · ${new Date(interview.scheduledAt).toLocaleString("zh-CN")}`
+                              : `${label} · ${interviewStatusText}`}
+                          </div>
                         </div>
-                        {interview.meetingUrl && (
-                          <a
-                            href={interview.meetingUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 inline-block text-sm text-blue-600 hover:text-blue-700"
-                          >
-                            打开会议链接
-                          </a>
-                        )}
-                        {(interview.meetingId || interview.meetingPassword) && (
-                          <div className="mt-1 text-xs text-gray-500">
-                            会议号：{interview.meetingId ?? "-"} · 密码：{interview.meetingPassword ?? "-"}
+                        <div className="flex items-center gap-3">
+                          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                            {interview.status}
+                          </span>
+                          {expanded ? (
+                            <ChevronDown className="h-4 w-4 text-gray-400" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                          )}
+                        </div>
+                      </button>
+                      {expanded && (
+                        <div className="border-t border-gray-100 px-4 py-4">
+                          <div className="text-sm text-gray-600">
+                            面试官：{interview.interviewer} · {new Date(interview.scheduledAt).toLocaleString("zh-CN")}
                           </div>
-                        )}
-                      </div>
-                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">{interview.status}</span>
-                    </div>
-                    {interview.evaluations.length > 0 ? (
-                      <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
-                        {interview.evaluations.map((evaluation) => (
-                          <div key={evaluation.id} className="space-y-1 text-sm text-gray-700">
-                            <div className="font-medium text-gray-900">
-                              {evaluation.interviewer} · 评分 {evaluation.score}
+                          {interview.meetingUrl && (
+                            <a
+                              href={interview.meetingUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-block text-sm text-blue-600 hover:text-blue-700"
+                            >
+                              打开会议链接
+                            </a>
+                          )}
+                          {(interview.meetingId || interview.meetingPassword) && (
+                            <div className="mt-2 text-xs text-gray-500">
+                              会议号：{interview.meetingId ?? "-"} · 密码：{interview.meetingPassword ?? "-"}
                             </div>
-                            <div>{evaluation.evaluation}</div>
-                            {evaluation.suggestion && <div className="text-blue-600">建议：{evaluation.suggestion}</div>}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-3 text-sm text-gray-500">当前还没有面试评价</div>
-                    )}
-                  </div>
-                ))
+                          )}
+                          {interview.evaluations.length > 0 ? (
+                            <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
+                              {interview.evaluations.map((evaluation) => (
+                                <div key={evaluation.id} className="space-y-2 text-sm text-gray-700">
+                                  <div className="font-medium text-gray-900">
+                                    {evaluation.interviewer} · {evaluation.result} · Score {evaluation.score}
+                                  </div>
+                                  <div className="text-xs text-gray-500">Submitted At: {new Date(evaluation.createdAt).toLocaleString("zh-CN")}</div>
+                                  <div>{evaluation.evaluation}</div>
+                                  {evaluation.strengths && <div>Strengths: {evaluation.strengths}</div>}
+                                  {evaluation.weaknesses && <div>Weaknesses: {evaluation.weaknesses}</div>}
+                                  {evaluation.suggestion && <div className="text-blue-600">Suggestion: {evaluation.suggestion}</div>}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="mt-3 text-sm text-gray-500">当前还没有面试评价</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               ) : (
                 <div className="text-sm text-gray-500">暂无面试记录</div>
               )}
@@ -1160,6 +1491,23 @@ export function CandidateDetail() {
             <input value={editForm.phone} onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="手机号" />
             <input value={editForm.email} onChange={(event) => setEditForm((prev) => ({ ...prev, email: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="邮箱" />
             <input value={editForm.location} onChange={(event) => setEditForm((prev) => ({ ...prev, location: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="城市" />
+            <select
+              value={editForm.departmentId}
+              onChange={(event) =>
+                setEditForm((prev) => ({
+                  ...prev,
+                  departmentId: event.target.value ? Number(event.target.value) : "",
+                }))
+              }
+              className="rounded-lg border border-gray-300 px-3 py-2.5"
+            >
+              <option value="">未分配部门</option>
+              {departments.map((department) => (
+                <option key={department.id} value={department.id}>
+                  {department.name}
+                </option>
+              ))}
+            </select>
             <input value={editForm.education} onChange={(event) => setEditForm((prev) => ({ ...prev, education: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="学历" />
             <input value={editForm.experience} onChange={(event) => setEditForm((prev) => ({ ...prev, experience: event.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2.5" placeholder="工作年限" />
           </div>
@@ -1227,7 +1575,7 @@ export function CandidateDetail() {
                   </div>
 
                   <div>
-                    <div className="text-sm font-medium text-gray-900">推荐动作</div>
+                      <div className="text-sm font-medium text-gray-900">推荐动作</div>
                     <div className="mt-1 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
                       {selectedDecisionReport.recommendedAction}
                     </div>
@@ -1340,3 +1688,5 @@ export function CandidateDetail() {
     </div>
   );
 }
+
+

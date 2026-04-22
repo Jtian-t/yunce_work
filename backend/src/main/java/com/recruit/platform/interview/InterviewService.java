@@ -46,7 +46,7 @@ public class InterviewService {
         Candidate candidate = candidateService.getEntity(request.candidateId());
         User interviewer = userRepository.findById(request.interviewerId())
                 .orElseThrow(() -> new NotFoundException("Interviewer not found"));
-        if (!interviewer.isEnabled() || interviewer.getEmploymentStatus() != EmploymentStatus.ACTIVE || !interviewer.isCanInterview()) {
+        if (!isAssignableInterviewer(interviewer)) {
             throw new ForbiddenException("Selected interviewer is not available");
         }
         User actor = currentUserService.getRequiredUser();
@@ -71,23 +71,16 @@ public class InterviewService {
         InterviewPlan saved = interviewPlanRepository.save(plan);
 
         workflowService.recordStatusChange(candidate, CandidateStatus.INTERVIEWING, "安排面试",
-                "已安排 " + interviewer.getDisplayName() + " 进行 " + request.roundLabel());
+                "已安排 " + interviewer.getDisplayName() + " 负责 " + request.roundLabel());
         candidate.setNextAction("等待" + request.roundLabel() + "结果");
 
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("candidateId", candidate.getId());
-        payload.put("candidateName", candidate.getName());
-        payload.put("position", candidate.getPosition());
-        payload.put("interviewId", saved.getId());
-        payload.put("departmentId", saved.getDepartment() == null ? null : saved.getDepartment().getId());
-        payload.put("departmentName", saved.getDepartment() == null ? null : saved.getDepartment().getName());
-        payload.put("interviewerId", interviewer.getId());
-        payload.put("interviewerName", interviewer.getDisplayName());
-        payload.put("roundLabel", request.roundLabel());
-        payload.put("scheduledAt", request.scheduledAt().toString());
-        payload.put("meetingUrl", firstNonBlank(request.meetingUrl(), ""));
-        payload.put("interviewStageCode", firstNonBlank(request.interviewStageCode(), defaultStageCode(request.roundLabel())));
-        payload.put("interviewStageLabel", firstNonBlank(request.interviewStageLabel(), request.roundLabel()));
+        Map<String, Object> payload = buildNotificationPayload(
+                saved,
+                interviewer,
+                request.roundLabel(),
+                request.scheduledAt(),
+                firstNonBlank(request.meetingUrl(), "")
+        );
 
         notificationService.create(interviewer, NotificationType.INTERVIEW_ASSIGNED,
                 "收到新的面试安排",
@@ -118,6 +111,65 @@ public class InterviewService {
                 departmentId,
                 notes
         ));
+    }
+
+    @Transactional
+    public InterviewPlanResponse updatePlan(Long interviewId, UpdateInterviewPlanRequest request) {
+        currentUserService.requireAnyRole(RoleType.HR, RoleType.ADMIN);
+        InterviewPlan plan = interviewPlanRepository.findById(interviewId)
+                .orElseThrow(() -> new NotFoundException("Interview plan not found"));
+        if (plan.getStatus() == InterviewPlanStatus.COMPLETED) {
+            throw new ForbiddenException("Completed interview plan cannot be modified");
+        }
+
+        User previousInterviewer = plan.getInterviewer();
+        User nextInterviewer = userRepository.findById(request.interviewerId())
+                .orElseThrow(() -> new NotFoundException("Interviewer not found"));
+        if (!isAssignableInterviewer(nextInterviewer)) {
+            throw new ForbiddenException("Selected interviewer is not available");
+        }
+
+        plan.setInterviewer(nextInterviewer);
+        plan.setRoundLabel(request.roundLabel());
+        plan.setScheduledAt(request.scheduledAt());
+        plan.setEndsAt(request.endsAt());
+        plan.setMeetingType(request.meetingType() == null ? InterviewMeetingType.ONSITE : request.meetingType());
+        plan.setMeetingUrl(request.meetingUrl());
+        plan.setMeetingId(request.meetingId());
+        plan.setMeetingPassword(request.meetingPassword());
+        plan.setInterviewStageCode(firstNonBlank(request.interviewStageCode(), defaultStageCode(request.roundLabel())));
+        plan.setInterviewStageLabel(firstNonBlank(request.interviewStageLabel(), request.roundLabel()));
+        plan.setNotes(request.notes());
+        plan.setDepartment(resolveDepartment(request.departmentId(), plan.getCandidate()));
+        plan.setOrganizer(currentUserService.getRequiredUser());
+
+        Candidate candidate = plan.getCandidate();
+        candidate.setStatus(CandidateStatus.INTERVIEWING);
+        candidate.setNextAction("等待" + request.roundLabel() + "结果");
+        workflowService.recordStatusChange(candidate, CandidateStatus.INTERVIEWING, "修改面试安排",
+                "已将 " + request.roundLabel() + " 更新给 " + nextInterviewer.getDisplayName());
+
+        Map<String, Object> payload = buildNotificationPayload(
+                plan,
+                nextInterviewer,
+                request.roundLabel(),
+                request.scheduledAt(),
+                firstNonBlank(request.meetingUrl(), "")
+        );
+
+        notificationService.create(nextInterviewer, NotificationType.INTERVIEW_UPDATED,
+                "面试安排已更新",
+                candidate.getName() + " 的" + request.roundLabel() + "已更新，请查看最新安排信息。",
+                payload);
+
+        if (!previousInterviewer.getId().equals(nextInterviewer.getId())) {
+            notificationService.create(previousInterviewer, NotificationType.INTERVIEW_UPDATED,
+                    "面试安排已变更",
+                    candidate.getName() + " 的" + request.roundLabel() + "已更新或改派，请以最新安排为准。",
+                    payload);
+        }
+
+        return toPlanResponse(plan);
     }
 
     @Transactional
@@ -166,6 +218,17 @@ public class InterviewService {
         return interviewPlanRepository.findByCandidateIdOrderByScheduledAtAsc(candidateId).stream()
                 .map(this::toPlanResponse)
                 .toList();
+    }
+
+    public InterviewPlanResponse getPlan(Long interviewId) {
+        InterviewPlan plan = interviewPlanRepository.findById(interviewId)
+                .orElseThrow(() -> new NotFoundException("Interview plan not found"));
+        User actor = currentUserService.getRequiredUser();
+        boolean privileged = currentUserService.hasAnyRole(RoleType.HR, RoleType.ADMIN, RoleType.DEPARTMENT_LEAD);
+        if (!privileged && !plan.getInterviewer().getId().equals(actor.getId())) {
+            throw new ForbiddenException("Cannot view this interview plan");
+        }
+        return toPlanResponse(plan);
     }
 
     public List<InterviewPlanResponse> listMine(String scope, Long departmentId, Long userId) {
@@ -324,6 +387,36 @@ public class InterviewService {
         return plan.getInterviewStageLabel() == null || plan.getInterviewStageLabel().isBlank()
                 ? plan.getRoundLabel()
                 : plan.getInterviewStageLabel();
+    }
+
+    private boolean isAssignableInterviewer(User interviewer) {
+        return interviewer.isEnabled()
+                && interviewer.getEmploymentStatus() == EmploymentStatus.ACTIVE
+                && (interviewer.isCanInterview() || interviewer.getRoles().contains(RoleType.INTERVIEWER));
+    }
+
+    private Map<String, Object> buildNotificationPayload(
+            InterviewPlan plan,
+            User interviewer,
+            String roundLabel,
+            OffsetDateTime scheduledAt,
+            String meetingUrl
+    ) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("candidateId", plan.getCandidate().getId());
+        payload.put("candidateName", plan.getCandidate().getName());
+        payload.put("position", plan.getCandidate().getPosition());
+        payload.put("interviewId", plan.getId());
+        payload.put("departmentId", plan.getDepartment() == null ? null : plan.getDepartment().getId());
+        payload.put("departmentName", plan.getDepartment() == null ? null : plan.getDepartment().getName());
+        payload.put("interviewerId", interviewer.getId());
+        payload.put("interviewerName", interviewer.getDisplayName());
+        payload.put("roundLabel", roundLabel);
+        payload.put("scheduledAt", scheduledAt.toString());
+        payload.put("meetingUrl", meetingUrl);
+        payload.put("interviewStageCode", safeStageCode(plan));
+        payload.put("interviewStageLabel", safeStageLabel(plan));
+        return payload;
     }
 
     private String normalizeScope(String scope) {

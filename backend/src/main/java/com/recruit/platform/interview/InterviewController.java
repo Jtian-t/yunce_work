@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,6 +20,16 @@ public class InterviewController {
     @PostMapping("/api/interviews")
     InterviewPlanResponse create(@Valid @RequestBody CreateInterviewPlanRequest request) {
         return interviewService.createPlan(request);
+    }
+
+    @PutMapping("/api/interviews/{id}")
+    InterviewPlanResponse update(@PathVariable Long id, @Valid @RequestBody UpdateInterviewPlanRequest request) {
+        return interviewService.updatePlan(id, request);
+    }
+
+    @GetMapping("/api/interviews/{id}")
+    InterviewPlanResponse detail(@PathVariable Long id) {
+        return interviewService.getPlan(id);
     }
 
     @PostMapping("/api/interviews/{id}/evaluations")
