@@ -9,11 +9,11 @@ from src.schemas import ParseFieldEvidence, ParseIssue
 
 SECTION_KEYWORDS = OrderedDict(
     [
-        ("education", ["教育经历", "教育背景", "学历", "education"]),
+        ("education", ["教育背景", "教育经历", "教育", "education"]),
         ("work_experience", ["工作经历", "实习经历", "职业经历", "experience"]),
-        ("projects", ["项目经历", "项目经验", "projects"]),
-        ("skills", ["技能", "专业技能", "技能特长", "skills", "tech stack"]),
-        ("summary", ["个人总结", "个人评价", "自我评价", "summary", "profile"]),
+        ("projects", ["项目经验", "项目经历", "project experience", "projects"]),
+        ("skills", ["专业技能", "技能", "skills", "tech stack", "技术栈"]),
+        ("summary", ["自我评价", "个人总结", "个人评价", "summary", "profile"]),
     ]
 )
 
@@ -44,7 +44,8 @@ def normalize_resume_sections(context: ParseAgentContext) -> None:
 
     phone_match = re.search(r"(?<!\d)(1[3-9]\d{9})(?!\d)", text)
     email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
-    name_match = re.search(r"(?:姓名|Name)\s*[:：]\s*([^\n]+)", text, re.IGNORECASE)
+    name_match = re.search(r"(?:姓名|name)\s*[:：]\s*([^\n]+)", text, re.IGNORECASE)
+
     if phone_match:
         context.fields["phone"] = ParseFieldEvidence(value=phone_match.group(1), confidence=0.95, source="regex")
     if email_match:

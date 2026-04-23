@@ -10,6 +10,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import java.time.OffsetDateTime;
 import lombok.Getter;
@@ -32,7 +33,8 @@ public class AgentJob extends BaseEntity {
     @Column(nullable = false)
     private AgentJobType jobType;
 
-    @Column(nullable = false, length = 10000)
+    @Lob
+    @Column(nullable = false, columnDefinition = "longtext")
     private String requestPayloadJson;
 
     @Column(nullable = false, unique = true)
@@ -44,6 +46,7 @@ public class AgentJob extends BaseEntity {
 
     private OffsetDateTime completedAt;
 
-    @Column(length = 2000)
+    @Lob
+    @Column(columnDefinition = "text")
     private String lastError;
 }

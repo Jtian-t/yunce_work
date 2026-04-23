@@ -1,8 +1,8 @@
 """
-Direct in-process validation for the new PDF parsing agent flow.
+Direct in-process validation for the PDF parsing agent flow.
 
-This test avoids FastAPI startup and validates the agent runtime against
-the local PDF fixture.
+This script avoids FastAPI startup and validates the agent runtime
+against the local PDF fixture.
 """
 
 import sys
@@ -27,8 +27,12 @@ def test_parse_local_pdf():
     )
     print("=== Parse Report ===")
     print(report.model_dump_json(indent=2, by_alias=True))
+
     assert report.summary
     assert report.fields
+    assert report.fields["name"].value == "金天祥"
+    assert len(report.educations) >= 2
+    assert len(report.raw_blocks) >= 10
 
 
 if __name__ == "__main__":

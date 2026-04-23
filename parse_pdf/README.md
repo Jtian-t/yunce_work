@@ -40,6 +40,7 @@ LLM_MODEL=gpt-4-turbo-preview
 ### 3. 启动服务
 
 ```bash
+conda activate parse_pdf_clean
 uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 

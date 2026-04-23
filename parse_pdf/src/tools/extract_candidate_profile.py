@@ -21,6 +21,38 @@ from src.schemas import (
 )
 
 
+KNOWN_SKILLS = [
+    "Java",
+    "Python",
+    "Spring Boot",
+    "SpringCloud",
+    "SpringMVC",
+    "Spring",
+    "MyBatis",
+    "Mybatis",
+    "MyBatisPlus",
+    "MySQL",
+    "Redis",
+    "Redisson",
+    "RabbitMQ",
+    "Kafka",
+    "Nacos",
+    "Sentinel",
+    "Seata",
+    "LangChain",
+    "RAG",
+    "Tool Calls",
+    "Agent",
+    "Docker",
+    "Maven",
+    "Git",
+    "JVM",
+    "XXL-Job",
+]
+
+SKILL_LINE_PREFIXES = ("Java", "计算机基础", "数据库", "Redis", "框架", "JVM", "AI Agent", "工具", "技术栈")
+
+
 def extract_candidate_profile(context: ParseAgentContext) -> None:
     sections_json = json.dumps(context.sections, ensure_ascii=False, indent=2)
     extracted_fields = json.dumps(
@@ -36,7 +68,10 @@ def extract_candidate_profile(context: ParseAgentContext) -> None:
         user_prompt=(
             "请根据已经提取出的简历片段和字段证据，生成标准 JSON。"
             "请尽量补全姓名、联系方式、个人总结、工作经历、项目经历、教育经历和技能。"
-            "如果某个字段没有足够证据，请返回空值或空数组，不要编造。\n\n"
+            "如果某个字段没有足够证据，请返回空值或空数组，不要编造。"
+            "对于技能，请优先返回标准技术名，不要返回大段整句说明。"
+            "对于项目经历，不要把技能描述或教育内容误判成项目。"
+            "对于工作经历，不要把学校经历误判成公司经历。\n\n"
             f"字段证据:\n{extracted_fields}\n\n"
             f"简历分段内容:\n{sections_json}"
         ),
@@ -50,6 +85,7 @@ def extract_candidate_profile(context: ParseAgentContext) -> None:
         candidate.phone = context.fields["phone"].value
     if not candidate.email and "email" in context.fields:
         candidate.email = context.fields["email"].value
+
     _apply_rule_based_fallbacks(context, candidate)
 
     context.candidate_info = candidate
@@ -62,34 +98,28 @@ def extract_candidate_profile(context: ParseAgentContext) -> None:
     if candidate.skills:
         context.fields["skillsSummary"] = ParseFieldEvidence(
             value=", ".join(candidate.skills),
-            confidence=0.72,
-            source="llm",
+            confidence=0.8,
+            source="rule+llm",
         )
     if candidate.projects:
         context.fields["projectSummary"] = ParseFieldEvidence(
             value=candidate.projects[0].description or candidate.projects[0].name,
-            confidence=0.68,
-            source="llm",
+            confidence=0.72,
+            source="rule+llm",
         )
     if candidate.work_experience:
         context.fields["experience"] = ParseFieldEvidence(
             value="；".join(
-                filter(
-                    None,
-                    [
-                        f"{item.company} {item.position}".strip()
-                        for item in candidate.work_experience
-                    ],
-                )
+                filter(None, [f"{item.company} {item.position}".strip() for item in candidate.work_experience])
             ),
-            confidence=0.7,
-            source="llm",
+            confidence=0.75,
+            source="rule+llm",
         )
     if candidate.education:
         context.fields["education"] = ParseFieldEvidence(
             value="；".join(filter(None, [f"{item.school} {item.degree}".strip() for item in candidate.education])),
-            confidence=0.7,
-            source="llm",
+            confidence=0.8,
+            source="rule+llm",
         )
 
     context.parse_report = ParseReport(
@@ -101,7 +131,7 @@ def extract_candidate_profile(context: ParseAgentContext) -> None:
             for project in candidate.projects
         ],
         skills=[
-            ParseSkill(raw_term=skill, normalized_name=skill, source_snippet="resume_profile", confidence=0.75)
+            ParseSkill(raw_term=skill, normalized_name=skill, source_snippet="resume_profile", confidence=0.82)
             for skill in candidate.skills
         ],
         projects=[
@@ -158,120 +188,194 @@ def _candidate_highlights(candidate: CandidateInfo) -> list[str]:
     return highlights
 
 
-KNOWN_SKILLS = [
-    "Java",
-    "Python",
-    "Spring",
-    "Spring Boot",
-    "SpringMVC",
-    "SpringCloud",
-    "MyBatis",
-    "Mybatis",
-    "MyBatisPlus",
-    "MySQL",
-    "Redis",
-    "Redisson",
-    "RabbitMQ",
-    "Kafka",
-    "Nacos",
-    "Sentinel",
-    "Seata",
-    "JVM",
-    "Docker",
-    "Maven",
-    "Git",
-    "LangChain",
-    "RAG",
-    "Agent",
-    "Tool Calls",
-    "XXL-Job",
-]
-
-
 def _apply_rule_based_fallbacks(context: ParseAgentContext, candidate: CandidateInfo) -> None:
     full_text = "\n".join(block.content for block in context.blocks if block.content)
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
 
     if not candidate.name:
-        name_match = re.search(r"(?:姓名|Name)\s*[:：]\s*([^\n]+)", full_text, re.IGNORECASE)
+        name_match = re.search(r"(?:姓名|name)\s*[:：]\s*([^\n]+)", full_text, re.IGNORECASE)
         if name_match:
             candidate.name = name_match.group(1).strip()
             context.fields["name"] = ParseFieldEvidence(value=candidate.name, confidence=0.98, source="regex")
 
-    if not candidate.skills:
-        seen = []
-        lowered = full_text.lower()
-        for skill in KNOWN_SKILLS:
-            if skill.lower() in lowered and skill not in seen:
-                seen.append(skill)
-        candidate.skills = seen
-
+    candidate.skills = _clean_skills(candidate.skills, lines)
     if not candidate.summary:
-        summary_match = re.search(r"(?:自我评价|个人总结|Summary)\s*\n(.+)", full_text, re.IGNORECASE)
-        if summary_match:
-            candidate.summary = summary_match.group(1).strip()
+        candidate.summary = _extract_summary(context.sections, lines)
+    candidate.education = _merge_education(candidate.education, lines)
+    candidate.projects = _merge_projects(candidate.projects, context.sections, lines)
+    candidate.work_experience = _merge_experiences(candidate.work_experience, lines, candidate.education)
 
-    if not candidate.education:
-        education_entries = []
-        lines = [line.strip() for line in full_text.splitlines() if line.strip()]
-        for index, line in enumerate(lines):
-            if ("大学" in line or "学院" in line) and ("本科" in line or "硕士" in line or "博士" in line):
-                period = lines[index - 1] if index > 0 and re.search(r"\d{4}", lines[index - 1]) else ""
-                school_degree = line.split()
-                school = school_degree[0]
-                degree = ""
-                for token in school_degree[1:]:
-                    if token in {"本科", "硕士", "博士"}:
-                        degree = token
-                        break
-                major = lines[index + 1] if index + 1 < len(lines) and len(lines[index + 1]) <= 20 else ""
-                education_entries.append(
-                    Education(school=school, degree=degree, major=major, duration=period)
-                )
-        if education_entries:
-            candidate.education = education_entries
 
-    if not candidate.projects:
-        project_entries = []
-        lines = [line.strip() for line in full_text.splitlines() if line.strip()]
-        for index, line in enumerate(lines):
-            if len(line) > 4 and len(line) <= 40 and not re.search(r"\d{4}", line):
-                if "系统" in line or "平台" in line or "项目" in line or "Agent" in line:
-                    if line not in {"项目经验", "Project Experience", "校园经历"}:
-                        detail = lines[index + 1] if index + 1 < len(lines) else ""
-                        tech_stack = [skill for skill in KNOWN_SKILLS if skill.lower() in detail.lower()]
-                        project_entries.append(
-                            Project(
-                                name=line,
-                                role="",
-                                description=detail,
-                                tech_stack=tech_stack,
-                            )
-                        )
-        if project_entries:
-            deduped = []
-            seen_names = set()
-            for item in project_entries:
-                if item.name in seen_names:
-                    continue
-                seen_names.add(item.name)
-                deduped.append(item)
-            candidate.projects = deduped[:3]
+def _clean_skills(existing: list[str], lines: list[str]) -> list[str]:
+    seen: list[str] = []
+    for skill in existing:
+        normalized = _normalize_skill_text(skill)
+        if normalized and normalized not in seen:
+            seen.append(normalized)
 
-    if not candidate.work_experience:
-        experience_entries = []
-        lines = [line.strip() for line in full_text.splitlines() if line.strip()]
-        for index, line in enumerate(lines):
-            if re.search(r"\d{4}[-./]\d{2}\s*[~-]\s*(?:\d{4}[-./]\d{2}|至今)", line):
-                if index + 1 < len(lines):
-                    next_line = lines[index + 1]
-                    if any(keyword in next_line for keyword in ("公司", "科技", "集团", "有限公司")):
-                        experience_entries.append(
-                            WorkExperience(
-                                company=next_line,
-                                position=lines[index + 2] if index + 2 < len(lines) else "",
-                                duration=line,
-                                description=lines[index + 3] if index + 3 < len(lines) else "",
-                            )
-                        )
-        if experience_entries:
-            candidate.work_experience = experience_entries
+    for line in lines:
+        if not line.startswith(SKILL_LINE_PREFIXES):
+            continue
+        for skill in KNOWN_SKILLS:
+            if skill.lower() in line.lower() and skill not in seen:
+                seen.append(skill)
+    return seen
+
+
+def _normalize_skill_text(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    for skill in sorted(KNOWN_SKILLS, key=len, reverse=True):
+        if skill.lower() in text.lower():
+            return skill
+    return ""
+
+
+def _extract_summary(sections: dict[str, str], lines: list[str]) -> str:
+    summary_text = sections.get("summary", "").strip()
+    if summary_text:
+        return summary_text.replace("\n", "")
+    for index, line in enumerate(lines):
+        if line.lower() in {"自我评价", "self-evaluation", "个人总结", "summary"}:
+            return "".join(lines[index + 1 : index + 3]).strip()
+    return ""
+
+
+def _merge_education(existing: list[Education], lines: list[str]) -> list[Education]:
+    merged: list[Education] = []
+    seen = set()
+    for item in existing:
+        key = (item.school, item.degree, item.duration)
+        if item.school and key not in seen:
+            seen.add(key)
+            merged.append(item)
+
+    for index, line in enumerate(lines):
+        if not (("大学" in line or "学院" in line) and any(token in line for token in ("本科", "硕士", "博士"))):
+            continue
+        period = lines[index - 1] if index > 0 and re.search(r"\d{4}", lines[index - 1]) else ""
+        school = ""
+        degree = ""
+        for token in line.split():
+            if not school:
+                school = token
+            if token in {"本科", "硕士", "博士"}:
+                degree = token
+                break
+        major = lines[index + 1] if index + 1 < len(lines) and len(lines[index + 1]) <= 20 else ""
+        entry = Education(school=school, degree=degree, major=major, duration=period)
+        key = (entry.school, entry.degree, entry.duration)
+        if entry.school and key not in seen:
+            seen.add(key)
+            merged.append(entry)
+    return merged
+
+
+def _merge_projects(existing: list[Project], sections: dict[str, str], lines: list[str]) -> list[Project]:
+    merged: list[Project] = []
+    seen = set()
+
+    for item in existing:
+        if _looks_like_valid_project_name(item.name):
+            key = item.name
+            if key not in seen:
+                seen.add(key)
+                item.tech_stack = _dedupe_skills(item.tech_stack)
+                merged.append(item)
+
+    project_section = sections.get("projects", "")
+    section_lines = [line.strip() for line in project_section.splitlines() if line.strip()]
+    for index, line in enumerate(section_lines):
+        if not _looks_like_valid_project_name(line):
+            continue
+        detail = section_lines[index + 1] if index + 1 < len(section_lines) else ""
+        project = Project(
+            name=line,
+            role="",
+            description=detail,
+            tech_stack=[skill for skill in KNOWN_SKILLS if skill.lower() in detail.lower()],
+        )
+        if project.name not in seen:
+            seen.add(project.name)
+            project.tech_stack = _dedupe_skills(project.tech_stack)
+            merged.append(project)
+
+    for index, line in enumerate(lines):
+        if not _looks_like_valid_project_name(line):
+            continue
+        window = " ".join(lines[index + 1 : index + 4])
+        if not any(keyword in window for keyword in ("项目背景", "技术栈", "核心工作内容", "项目")):
+            continue
+        project = Project(
+            name=line,
+            role="",
+            description=window,
+            tech_stack=[skill for skill in KNOWN_SKILLS if skill.lower() in window.lower()],
+        )
+        if project.name not in seen:
+            seen.add(project.name)
+            project.tech_stack = _dedupe_skills(project.tech_stack)
+            merged.append(project)
+
+    return merged[:5]
+
+
+def _looks_like_valid_project_name(line: str) -> bool:
+    if not line or len(line) < 5 or len(line) > 40:
+        return False
+    if any(keyword in line for keyword in ("技能", "技术栈", "工具", "专业技能", "教育", "大学", "学院", "工作经历")):
+        return False
+    if re.search(r"^\d{4}", line):
+        return False
+    return any(keyword in line for keyword in ("系统", "平台", "项目", "Agent"))
+
+
+def _merge_experiences(existing: list[WorkExperience], lines: list[str], education: list[Education]) -> list[WorkExperience]:
+    merged: list[WorkExperience] = []
+    seen = set()
+    education_schools = {item.school for item in education if item.school}
+
+    for item in existing:
+        if (
+            item.company
+            and item.company not in education_schools
+            and not any(word in item.company for word in ("大学", "学院", "本科", "硕士", "博士"))
+        ):
+            key = (item.company, item.position, item.duration)
+            if key not in seen:
+                seen.add(key)
+                merged.append(item)
+
+    for index, line in enumerate(lines):
+        if not re.search(r"\d{4}[-./]\d{2}\s*[~-]\s*(?:\d{4}[-./]\d{2}|至今)", line):
+            continue
+        window = lines[index + 1 : index + 5]
+        company = next((item for item in window if any(word in item for word in ("公司", "科技", "集团", "有限公司"))), "")
+        if not company or company in education_schools:
+            continue
+        if any(word in company for word in ("大学", "学院", "本科", "硕士", "博士")):
+            continue
+        position = ""
+        description = ""
+        if company in window:
+            company_index = window.index(company)
+            if company_index + 1 < len(window):
+                position = window[company_index + 1]
+            if company_index + 2 < len(window):
+                description = window[company_index + 2]
+        entry = WorkExperience(company=company, position=position, duration=line, description=description)
+        key = (entry.company, entry.position, entry.duration)
+        if key not in seen:
+            seen.add(key)
+            merged.append(entry)
+    return merged
+
+
+def _dedupe_skills(skills: list[str]) -> list[str]:
+    result: list[str] = []
+    for skill in skills:
+        normalized = _normalize_skill_text(skill)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result

@@ -20,45 +20,58 @@ public class AgentResult extends BaseEntity {
     private AgentJob job;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String summary;
 
     @Column
     private Integer overallScore;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String dimensionScoresJson;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String strengths;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String risks;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String recommendedAction;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String rawReasoningDigest;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String parseReportJson;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String decisionReportJson;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String skillsJson;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String projectsJson;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String experiencesJson;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String educationsJson;
 
     @Lob
+    @Column(columnDefinition = "longtext")
     private String rawBlocksJson;
 
     @Column(length = 255)
@@ -73,15 +86,19 @@ public class AgentResult extends BaseEntity {
     @Column(length = 255)
     private String parsedLocation;
 
-    @Column(length = 1000)
+    @Lob
+    @Column(columnDefinition = "text")
     private String parsedEducation;
 
-    @Column(length = 1000)
+    @Lob
+    @Column(columnDefinition = "text")
     private String parsedExperience;
 
-    @Column(length = 5000)
+    @Lob
+    @Column(columnDefinition = "longtext")
     private String parsedSkillsSummary;
 
-    @Column(length = 5000)
+    @Lob
+    @Column(columnDefinition = "longtext")
     private String parsedProjectSummary;
 }
