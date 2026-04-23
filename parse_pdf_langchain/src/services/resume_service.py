@@ -6,7 +6,9 @@ from src.schemas import (
     AnalysisResult,
     CandidateInfo,
     DecisionReport,
+    ParseIssue,
     ParseReport,
+    ResumeProfile,
     ResumeAnalyzeRequest,
     ResumeDecisionReportRequest,
     ResumeParseReportRequest,
@@ -34,6 +36,23 @@ class ResumeService:
         uploaded_file_name: str | None = None,
         uploaded_file_content: bytes | None = None,
     ) -> ParseReport:
+        if (
+            uploaded_file_content is None
+            and not request.resume_text
+            and not request.resume_file_path
+            and not request.resume_file_url
+            and not request.resume_file_base64
+        ):
+            report = build_parse_report(
+                profile=ResumeProfile(source="简历上传"),
+                raw_text="",
+                file_name=request.resume_file_name or "resume.txt",
+                ocr_required=False,
+            )
+            report.summary = "未收到简历内容，返回空白解析结果。"
+            report.issues.append(ParseIssue(severity="WARN", message="请求体为空或未包含简历内容"))
+            return report
+
         loaded = load_resume(
             request,
             uploaded_file_name=uploaded_file_name,
@@ -71,6 +90,25 @@ class ResumeService:
     @classmethod
     def generate_decision_report(cls, request: ResumeDecisionReportRequest) -> DecisionReport:
         profile = request.resolved_profile()
+        if (
+            not profile.name
+            and not profile.skills_summary
+            and not request.job_requirements
+            and not request.interview_feedbacks
+        ):
+            return DecisionReport(
+                conclusion="当前缺少候选人信息，暂无法生成有效决策。",
+                recommendation_score=0,
+                recommendation_level="建议补充信息",
+                recommended_action="请先补充简历解析结果、岗位要求或面试反馈，再重新生成辅助决策。",
+                strengths=[],
+                risks=["候选人基础信息缺失"],
+                missing_information=["简历解析结果", "岗位要求", "面试反馈"],
+                supporting_evidence=["请求体为空或缺少有效字段"],
+                reasoning_summary="由于输入信息缺失，当前只能返回空白决策结果。",
+                optimization_suggestions=["先完成简历解析，再发起辅助决策"],
+                interview_round_summaries=[],
+            )
         return cls.decision_chain.invoke(
             resume_profile=profile,
             job_requirements=request.job_requirements,

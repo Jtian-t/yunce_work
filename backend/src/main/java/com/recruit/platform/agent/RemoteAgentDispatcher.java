@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -65,19 +66,21 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
     void dispatchParseJob(AgentJob job, String payloadJson) throws JsonProcessingException, IOException {
         Map<String, Object> payload = readMap(payloadJson);
         ResumeAsset asset = latestResumeAsset(job.getCandidate().getId());
-        String resumeText = asset == null ? "" : extractText(asset);
+        byte[] resumeBytes = asset == null ? null : readBytes(asset);
+        String resumeText = resumeBytes == null ? "" : extractText(asset, resumeBytes);
 
-        Map<String, Object> parseRequest = new LinkedHashMap<>();
-        parseRequest.put("resume_text", resumeText);
-        parseRequest.put("resume_file_url", stringValue(payload.get("resumeFileUrl")));
-        parseRequest.put("resume_file_name", firstNonBlank(stringValue(payload.get("originalFileName")), asset == null ? null : asset.getOriginalFileName()));
-        parseRequest.put("hint", stringValue(payload.get("hint")));
-
-        ParseReportResponse parseReport = parsePdfAgentClient.post(
-                agentProperties.parsePath(),
-                parseRequest,
-                ParseReportResponse.class
+        log.info(
+                "Dispatch parse job {} for candidate {}, asset={}, fileName={}, resumeBytes={}, resumeTextLength={}, resumeFileUrl={}",
+                job.getId(),
+                job.getCandidate().getId(),
+                asset == null ? null : asset.getObjectKey(),
+                asset == null ? null : asset.getOriginalFileName(),
+                resumeBytes == null ? 0 : resumeBytes.length,
+                resumeText == null ? 0 : resumeText.length(),
+                stringValue(payload.get("resumeFileUrl"))
         );
+
+        ParseReportResponse parseReport = requestParseReport(payload, asset, resumeBytes, resumeText);
 
         ParsedCandidateDraftResponse draft = new ParsedCandidateDraftResponse(
                 parseFieldValue(parseReport, "name"),
@@ -129,19 +132,12 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
         Map<String, Object> payload = readMap(payloadJson);
         Candidate candidate = job.getCandidate();
         ResumeAsset asset = latestResumeAsset(candidate.getId());
-        String resumeText = asset == null ? "" : extractText(asset);
+        byte[] resumeBytes = asset == null ? null : readBytes(asset);
+        String resumeText = resumeBytes == null ? "" : extractText(asset, resumeBytes);
 
         ParseReportResponse parseReport;
         if (payload.get("parseReport") == null) {
-            Map<String, Object> parseRequest = new LinkedHashMap<>();
-            parseRequest.put("resume_text", resumeText);
-            parseRequest.put("resume_file_url", stringValue(payload.get("resumeFileUrl")));
-            parseRequest.put("resume_file_name", firstNonBlank(stringValue(payload.get("originalFileName")), asset == null ? null : asset.getOriginalFileName()));
-            parseReport = parsePdfAgentClient.post(
-                    agentProperties.parsePath(),
-                    parseRequest,
-                    ParseReportResponse.class
-            );
+            parseReport = requestParseReport(payload, asset, resumeBytes, resumeText);
         } else {
             parseReport = objectMapper.convertValue(payload.get("parseReport"), ParseReportResponse.class);
         }
@@ -256,8 +252,7 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
         return feedbacks;
     }
 
-    private String extractText(ResumeAsset asset) throws IOException {
-        byte[] bytes = readBytes(asset);
+    private String extractText(ResumeAsset asset, byte[] bytes) throws IOException {
         if (looksLikePdf(asset, bytes)) {
             String pdfText = extractPdfText(bytes);
             if (pdfText != null && !pdfText.isBlank()) {
@@ -271,6 +266,43 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
         try (InputStream inputStream = resumeStorageService.openStream(asset.getObjectKey())) {
             return inputStream.readAllBytes();
         }
+    }
+
+    private ParseReportResponse requestParseReport(
+            Map<String, Object> payload,
+            ResumeAsset asset,
+            byte[] resumeBytes,
+            String resumeText
+    ) {
+        String fileName = firstNonBlank(
+                stringValue(payload.get("originalFileName")),
+                asset == null ? null : asset.getOriginalFileName()
+        );
+        String hint = stringValue(payload.get("hint"));
+
+        if (resumeBytes != null && resumeBytes.length > 0) {
+            Map<String, String> headers = new LinkedHashMap<>();
+            headers.put("X-Resume-File-Name-Base64", encodeHeaderValue(fileName));
+            headers.put("X-Parse-Hint-Base64", encodeHeaderValue(hint));
+            return parsePdfAgentClient.postBinary(
+                    "/api/resume/parse-report/raw",
+                    resumeBytes,
+                    headers,
+                    ParseReportResponse.class
+            );
+        }
+
+        Map<String, Object> parseRequest = new LinkedHashMap<>();
+        parseRequest.put("resume_text", resumeText);
+        parseRequest.put("resume_file_url", stringValue(payload.get("resumeFileUrl")));
+        parseRequest.put("resume_file_name", fileName);
+        parseRequest.put("resume_file_base64", null);
+        parseRequest.put("hint", hint);
+        return parsePdfAgentClient.post(
+                agentProperties.parsePath(),
+                parseRequest,
+                ParseReportResponse.class
+        );
     }
 
     private boolean looksLikePdf(ResumeAsset asset, byte[] bytes) {
@@ -328,6 +360,13 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
             }
         }
         return null;
+    }
+
+    private String encodeHeaderValue(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private String stringValue(Object value) {

@@ -1542,13 +1542,14 @@ export function CandidateDetail() {
       </Dialog>
 
       <Dialog open={decisionDialogOpen} onOpenChange={setDecisionDialogOpen}>
-        <DialogContent className="sm:max-w-4xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90vh] flex-col overflow-hidden p-0 sm:max-w-4xl">
+          <DialogHeader className="shrink-0 border-b border-gray-200 px-6 pt-6 pb-4 pr-14">
             <DialogTitle>辅助决策</DialogTitle>
             <DialogDescription>综合简历解析、部门反馈、面试进展与评价，为当前候选人生成可保留的决策建议。</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-6 md:grid-cols-[1.2fr,0.8fr]">
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="grid gap-6 md:grid-cols-[1.2fr,0.8fr]">
             <div className="space-y-4">
               <label className="block text-sm text-gray-700">
                 决策关注点（可选）
@@ -1705,8 +1706,9 @@ export function CandidateDetail() {
               </div>
             </div>
           </div>
+          </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t border-gray-200 px-6 py-4">
             <button
               type="button"
               onClick={() => void handleDecisionAnalysis()}

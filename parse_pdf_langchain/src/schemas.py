@@ -79,6 +79,7 @@ class ResumeSourceRequest(BaseModel):
     resume_text: Optional[str] = None
     resume_file_url: Optional[str] = None
     resume_file_path: Optional[str] = None
+    resume_file_base64: Optional[str] = None
     resume_file_name: Optional[str] = None
     hint: Optional[str] = None
 

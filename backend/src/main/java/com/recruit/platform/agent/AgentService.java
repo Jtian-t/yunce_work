@@ -136,15 +136,18 @@ public class AgentService {
     }
 
     public AgentJobResponse latestAnalysis(Long candidateId) {
-        return latestByType(candidateId, AgentJobType.ANALYSIS);
+        return latestByType(candidateId, AgentJobType.ANALYSIS)
+                .orElseThrow(() -> new NotFoundException(AgentJobType.ANALYSIS.name() + " job not found"));
     }
 
     public AgentJobResponse latestParse(Long candidateId) {
-        return latestByType(candidateId, AgentJobType.PARSE);
+        return latestByType(candidateId, AgentJobType.PARSE)
+                .orElseGet(() -> createParseJob(candidateId, new CreateParseJobRequest("自动触发解析")));
     }
 
     public AgentJobResponse latestDecision(Long candidateId) {
-        return latestByType(candidateId, AgentJobType.DECISION);
+        return latestByType(candidateId, AgentJobType.DECISION)
+                .orElseThrow(() -> new NotFoundException(AgentJobType.DECISION.name() + " job not found"));
     }
 
     @Transactional
@@ -312,10 +315,9 @@ public class AgentService {
         return agentJobRepository.save(job);
     }
 
-    private AgentJobResponse latestByType(Long candidateId, AgentJobType jobType) {
-        AgentJob job = agentJobRepository.findTopByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, jobType)
-                .orElseThrow(() -> new NotFoundException(jobType.name() + " job not found"));
-        return toResponse(job);
+    private Optional<AgentJobResponse> latestByType(Long candidateId, AgentJobType jobType) {
+        return agentJobRepository.findTopByCandidateIdAndJobTypeOrderByCreatedAtDesc(candidateId, jobType)
+                .map(this::toResponse);
     }
 
     private ResumeAsset requireLatestResume(Long candidateId) {

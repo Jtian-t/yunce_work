@@ -59,7 +59,7 @@ app:
     timeout-days: 2
     enabled: ${AGENT_ENABLED:true}
     fallback-to-mock: ${AGENT_FALLBACK_TO_MOCK:false}
-    service-base-url: ${AGENT_SERVICE_BASE_URL:http://localhost:8000}
+    service-base-url: ${AGENT_SERVICE_BASE_URL:http://localhost:8002}
     parse-path: ${AGENT_PARSE_PATH:/api/resume/parse-report}
     analyze-path: ${AGENT_ANALYZE_PATH:/api/resume/decision-report}
     connect-timeout-ms: ${AGENT_CONNECT_TIMEOUT_MS:3000}

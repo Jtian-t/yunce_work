@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,13 +38,10 @@ def load_resume(
         file_name = uploaded_file_name or request.resume_file_name or "upload.pdf"
         return _from_bytes(uploaded_file_content, file_name, source_label="简历上传")
 
-    if request.resume_text:
-        return LoadedResume(
-            file_name=request.resume_file_name or "resume.txt",
-            text=request.resume_text,
-            source_label=_detect_source_label(request.hint),
-            ocr_required=False,
-        )
+    if request.resume_file_base64:
+        file_name = request.resume_file_name or "resume.pdf"
+        content = base64.b64decode(request.resume_file_base64)
+        return _from_bytes(content, file_name, source_label=_detect_source_label(request.hint))
 
     if request.resume_file_path:
         path = Path(request.resume_file_path)
@@ -55,6 +53,14 @@ def load_resume(
         parsed = urlparse(request.resume_file_url)
         file_name = request.resume_file_name or Path(parsed.path).name or "resume.pdf"
         return _from_bytes(response.content, file_name, source_label=_detect_source_label(request.hint))
+
+    if request.resume_text:
+        return LoadedResume(
+            file_name=request.resume_file_name or "resume.txt",
+            text=request.resume_text,
+            source_label=_detect_source_label(request.hint),
+            ocr_required=False,
+        )
 
     raise ValueError("At least one of resume_text, resume_file_path, or resume_file_url must be provided")
 
