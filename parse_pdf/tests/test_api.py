@@ -1,67 +1,95 @@
+"""
+API smoke tests for the resume parsing sidecar.
 
+The target base URL can be overridden with BASE_URL.
 """
-API 测试脚本
-使用前请先启动服务: uvicorn src.main:app --reload
-"""
+
+import os
+from pathlib import Path
+
 import httpx
 
-BASE_URL = "http://localhost:8000"
+
+BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000")
+
+
+def _print_response(response: httpx.Response):
+    print(f"status_code={response.status_code}")
+    print(f"content_type={response.headers.get('content-type', '')}")
+    try:
+        data = response.json()
+        print(data)
+        return data
+    except ValueError:
+        text = response.text.strip()
+        print(text if text else "<empty response body>")
+        return None
 
 
 def test_parse_resume():
-    """测试简历解析接口"""
-    with open("tests/sample_resume.txt", "r", encoding="utf-8") as f:
-        resume_text = f.read()
-
+    resume_text = (Path(__file__).parent / "sample_resume.txt").read_text(encoding="utf-8")
     response = httpx.post(
         f"{BASE_URL}/api/resume/parse",
-        json={"resume_text": resume_text}
+        json={"resume_text": resume_text},
+        timeout=90.0,
     )
-    print("=== 简历解析结果 ===")
-    print(response.json())
-    return response.json()
+    print("=== Legacy Parse Result ===")
+    data = _print_response(response)
+    response.raise_for_status()
+    return data
 
 
-def test_analyze_candidate(candidate_info):
-    """测试分析建议接口"""
-    job_requirements = """
-    岗位职责：
-    1. 5年以上Java开发经验
-    2. 熟悉Spring Boot、Redis、MySQL
-    3. 有高并发系统经验优先
-    4. 有电商平台经验优先
-    """
-
-    interview_feedbacks = [
-        {
-            "round": 1,
-            "interviewer": "李面试官",
-            "feedback": "候选人技术基础扎实，对Redis理解深入，但项目经验细节描述不够清晰",
-            "score": 80,
-            "pros": ["技术基础好", "沟通顺畅"],
-            "cons": ["项目细节不够"]
-        }
-    ]
-
+def test_parse_report_from_pdf():
+    pdf_path = Path(__file__).resolve().parents[1] / "金天祥java后端开发简历.pdf"
     response = httpx.post(
-        f"{BASE_URL}/api/resume/analyze",
+        f"{BASE_URL}/api/resume/parse-report",
+        json={"resume_file_path": str(pdf_path), "resume_file_name": pdf_path.name},
+        timeout=180.0,
+    )
+    print("=== PDF Parse Report ===")
+    data = _print_response(response)
+    response.raise_for_status()
+    return data
+
+
+def test_decision_report(candidate_info):
+    response = httpx.post(
+        f"{BASE_URL}/api/resume/decision-report",
         json={
             "candidate_info": candidate_info,
-            "job_requirements": job_requirements,
-            "interview_feedbacks": interview_feedbacks
-        }
+            "job_requirements": (
+                "Java 后端开发岗位，需要熟悉 Spring Boot、MySQL、Redis、Kafka，"
+                "具备中大型系统设计与接口开发经验，有良好的问题定位能力。"
+            ),
+            "interview_feedbacks": [
+                {
+                    "round": 1,
+                    "interviewer": "技术一面",
+                    "feedback": "Java 基础比较扎实，接口设计能力不错，对常见中间件有实践经验。",
+                    "score": 78,
+                    "pros": ["Java 基础扎实", "接口设计思路清晰"],
+                    "cons": ["高并发场景经验还需要继续确认"],
+                },
+                {
+                    "round": 2,
+                    "interviewer": "项目复盘面",
+                    "feedback": "项目经历较完整，但系统容量评估和性能压测细节回答不够深入。",
+                    "score": 72,
+                    "pros": ["项目背景真实", "能说清主导模块"],
+                    "cons": ["容量设计细节不足", "性能压测经验不足"],
+                },
+            ],
+        },
+        timeout=180.0,
     )
-    print("\n=== 分析建议结果 ===")
-    print(response.json())
+    print("=== Decision Report ===")
+    data = _print_response(response)
+    response.raise_for_status()
+    return data
 
 
 if __name__ == "__main__":
-    print("请先确保服务已启动，然后运行:")
-    print("1. pip install -r requirements.txt")
-    print("2. 复制 .env.example 为 .env 并配置 LLM API")
-    print("3. uvicorn src.main:app --reload")
-    print("4. 取消注释下面的代码进行测试\n")
-
-    # candidate = test_parse_resume()
-    # test_analyze_candidate(candidate)
-
+    print(f"Using base URL: {BASE_URL}")
+    candidate = test_parse_resume()
+    test_parse_report_from_pdf()
+    test_decision_report(candidate)
