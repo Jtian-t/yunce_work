@@ -138,7 +138,19 @@ record DecisionReportResponse(
         List<String> risks,
         List<String> missingInformation,
         List<String> supportingEvidence,
-        String reasoningSummary
+        String reasoningSummary,
+        List<String> optimizationSuggestions,
+        List<InterviewRoundSummaryResponse> interviewRoundSummaries
+) {
+}
+
+record InterviewRoundSummaryResponse(
+        Integer round,
+        String interviewer,
+        Integer score,
+        String verdict,
+        List<String> positives,
+        List<String> negatives
 ) {
 }
 

@@ -501,7 +501,9 @@ public class AgentService {
                 splitText(result.getRisks()),
                 List.of(),
                 List.of(),
-                result.getRawReasoningDigest()
+                result.getRawReasoningDigest(),
+                List.of(),
+                List.of()
         );
     }
 

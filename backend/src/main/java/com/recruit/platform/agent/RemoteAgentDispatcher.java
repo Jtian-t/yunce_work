@@ -1,6 +1,5 @@
 package com.recruit.platform.agent;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,7 +39,6 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
     private final ResumeAssetRepository resumeAssetRepository;
     private final ResumeStorageService resumeStorageService;
     private final ObjectMapper objectMapper;
-    private final ResumeExtractionPipeline resumeExtractionPipeline;
     private final ParsePdfAgentClient parsePdfAgentClient;
     private final AppAgentProperties agentProperties;
     private final LoggingAgentDispatcher fallbackDispatcher;
@@ -69,13 +67,18 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
         ResumeAsset asset = latestResumeAsset(job.getCandidate().getId());
         String resumeText = asset == null ? "" : extractText(asset);
 
-        RemoteCandidateInfo remoteCandidate = parsePdfAgentClient.post(
+        Map<String, Object> parseRequest = new LinkedHashMap<>();
+        parseRequest.put("resume_text", resumeText);
+        parseRequest.put("resume_file_url", stringValue(payload.get("resumeFileUrl")));
+        parseRequest.put("resume_file_name", firstNonBlank(stringValue(payload.get("originalFileName")), asset == null ? null : asset.getOriginalFileName()));
+        parseRequest.put("hint", stringValue(payload.get("hint")));
+
+        ParseReportResponse parseReport = parsePdfAgentClient.post(
                 agentProperties.parsePath(),
-                Map.of("resume_text", resumeText),
-                RemoteCandidateInfo.class
+                parseRequest,
+                ParseReportResponse.class
         );
 
-        ParseReportResponse parseReport = toParseReport(remoteCandidate, resumeText);
         ParsedCandidateDraftResponse draft = new ParsedCandidateDraftResponse(
                 parseFieldValue(parseReport, "name"),
                 parseFieldValue(parseReport, "phone"),
@@ -128,9 +131,20 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
         ResumeAsset asset = latestResumeAsset(candidate.getId());
         String resumeText = asset == null ? "" : extractText(asset);
 
-        ParseReportResponse parseReport = payload.get("parseReport") == null
-                ? toParseReport(parseRemoteCandidateInfo(resumeText), resumeText)
-                : objectMapper.convertValue(payload.get("parseReport"), ParseReportResponse.class);
+        ParseReportResponse parseReport;
+        if (payload.get("parseReport") == null) {
+            Map<String, Object> parseRequest = new LinkedHashMap<>();
+            parseRequest.put("resume_text", resumeText);
+            parseRequest.put("resume_file_url", stringValue(payload.get("resumeFileUrl")));
+            parseRequest.put("resume_file_name", firstNonBlank(stringValue(payload.get("originalFileName")), asset == null ? null : asset.getOriginalFileName()));
+            parseReport = parsePdfAgentClient.post(
+                    agentProperties.parsePath(),
+                    parseRequest,
+                    ParseReportResponse.class
+            );
+        } else {
+            parseReport = objectMapper.convertValue(payload.get("parseReport"), ParseReportResponse.class);
+        }
 
         String jobRequirements = firstNonBlank(
                 stringValue(payload.get("jdSummary")),
@@ -140,21 +154,21 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
                 candidate.getPosition()
         );
 
-        RemoteAnalysisResult remoteAnalysis = parsePdfAgentClient.post(
+        Map<String, Object> decisionRequest = new LinkedHashMap<>();
+        decisionRequest.put("parse_report", parseReport);
+        decisionRequest.put("job_requirements", jobRequirements == null ? "" : jobRequirements);
+        decisionRequest.put("interview_feedbacks", toRemoteInterviewFeedbacks(payload.get("interviews")));
+
+        DecisionReportResponse decisionReport = parsePdfAgentClient.post(
                 agentProperties.analyzePath(),
-                Map.of(
-                        "candidate_info", toRemoteCandidateInfo(parseReport),
-                        "job_requirements", jobRequirements == null ? "" : jobRequirements,
-                        "interview_feedbacks", toRemoteInterviewFeedbacks(payload.get("interviews"))
-                ),
-                RemoteAnalysisResult.class
+                decisionRequest,
+                DecisionReportResponse.class
         );
 
-        DecisionReportResponse decisionReport = toDecisionReport(parseReport, remoteAnalysis);
         Map<String, Integer> dimensionScores = new LinkedHashMap<>();
-        dimensionScores.put("experienceScore", defaultInt(remoteAnalysis.experienceScore()));
-        dimensionScores.put("skillMatchScore", defaultInt(remoteAnalysis.skillMatchScore()));
-        dimensionScores.put("overallRecommendation", defaultInt(remoteAnalysis.overallScore()));
+        dimensionScores.put("overallRecommendation", defaultInt(decisionReport.recommendationScore()));
+        dimensionScores.put("evidenceCoverage", Math.min(100, safeList(decisionReport.supportingEvidence()).size() * 20 + 20));
+        dimensionScores.put("riskControl", Math.max(0, 100 - safeList(decisionReport.risks()).size() * 15));
 
         AgentResult result = agentResultRepository.findByJobId(job.getId()).orElseGet(AgentResult::new);
         result.setJob(job);
@@ -212,206 +226,6 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
 
     private ResumeAsset latestResumeAsset(Long candidateId) {
         return resumeAssetRepository.findTopByCandidateIdOrderByUploadedAtDesc(candidateId).orElse(null);
-    }
-
-    private RemoteCandidateInfo parseRemoteCandidateInfo(String resumeText) {
-        return parsePdfAgentClient.post(
-                agentProperties.parsePath(),
-                Map.of("resume_text", resumeText == null ? "" : resumeText),
-                RemoteCandidateInfo.class
-        );
-    }
-
-    private ParseReportResponse toParseReport(RemoteCandidateInfo response, String resumeText) {
-        PipelineDocument pipelineDocument = resumeExtractionPipeline.ingest(resumeText);
-        List<RemoteEducation> educationItems = safeList(response.education());
-        List<RemoteWorkExperience> workExperiences = safeList(response.workExperience());
-        List<RemoteProject> projectsFromAgent = safeList(response.projects());
-        List<String> skillsFromAgent = safeList(response.skills());
-
-        Map<String, ParseFieldValueResponse> fields = new LinkedHashMap<>();
-        putField(fields, "name", response.name(), 0.92, "parse_pdf");
-        putField(fields, "phone", response.phone(), 0.92, "parse_pdf");
-        putField(fields, "email", response.email(), 0.92, "parse_pdf");
-        putField(fields, "education", summarizeEducations(educationItems), 0.88, "parse_pdf");
-        putField(fields, "experience", summarizeExperiences(workExperiences), 0.86, "parse_pdf");
-        putField(fields, "skillsSummary", skillsFromAgent.isEmpty() ? null : String.join(", ", skillsFromAgent), 0.86, "parse_pdf");
-        putField(
-                fields,
-                "projectSummary",
-                projectsFromAgent.stream()
-                        .map(RemoteProject::description)
-                        .filter(item -> item != null && !item.isBlank())
-                        .findFirst()
-                        .orElse(null),
-                0.82,
-                "parse_pdf"
-        );
-
-        List<String> highlights = new ArrayList<>();
-        if (!skillsFromAgent.isEmpty()) {
-            highlights.add("识别出核心技能：" + String.join("、", skillsFromAgent.stream().limit(5).toList()));
-        }
-        if (!projectsFromAgent.isEmpty()) {
-            highlights.add("提取到 " + projectsFromAgent.size() + " 段项目经历");
-        }
-        if (!workExperiences.isEmpty()) {
-            highlights.add("提取到 " + workExperiences.size() + " 段工作经历");
-        }
-        if (response.summary() != null && !response.summary().isBlank()) {
-            highlights.add("生成候选人摘要，可直接用于后续评估");
-        }
-
-        List<ParseIssueResponse> issues = new ArrayList<>();
-        if (response.phone() == null || response.phone().isBlank()) {
-            issues.add(new ParseIssueResponse("WARN", "未识别到手机号，建议人工补录。"));
-        }
-        if (response.email() == null || response.email().isBlank()) {
-            issues.add(new ParseIssueResponse("WARN", "未识别到邮箱，建议人工补录。"));
-        }
-        if (projectsFromAgent.isEmpty()) {
-            issues.add(new ParseIssueResponse("INFO", "项目经历较少，建议人工确认关键项目与职责。"));
-        }
-        if (pipelineDocument.ocrRequired()) {
-            issues.add(new ParseIssueResponse("WARN", "当前文本提取结果为空，可能需要 OCR 处理。"));
-        }
-
-        List<ParseProjectResponse> projectExperiences = projectsFromAgent.stream()
-                .map(project -> new ParseProjectResponse(
-                        firstNonBlank(project.name(), "项目经历"),
-                        firstNonBlank(project.description(), project.role(), "")
-                ))
-                .toList();
-
-        List<ParseProjectDetailResponse> projects = projectsFromAgent.stream()
-                .map(project -> new ParseProjectDetailResponse(
-                        project.name(),
-                        null,
-                        project.role(),
-                        safeList(project.techStack()),
-                        blankToEmptyList(project.description()),
-                        List.of(),
-                        firstNonBlank(project.description(), "")
-                ))
-                .toList();
-
-        List<ParseExperienceResponse> experiences = workExperiences.stream()
-                .map(item -> new ParseExperienceResponse(item.company(), item.position(), item.duration(), item.description()))
-                .toList();
-
-        List<ParseEducationResponse> educations = educationItems.stream()
-                .map(item -> new ParseEducationResponse(item.school(), item.degree(), item.duration(), item.major()))
-                .toList();
-
-        List<ParseRawBlockResponse> rawBlocks = new ArrayList<>(pipelineDocument.rawBlocks());
-        if (response.summary() != null && !response.summary().isBlank()) {
-            rawBlocks.add(new ParseRawBlockResponse("SUMMARY", "候选人摘要", response.summary()));
-        }
-
-        String summary = firstNonBlank(
-                response.summary(),
-                "已完成结构化简历解析，识别到 "
-                        + skillsFromAgent.size()
-                        + " 项技能、"
-                        + projectsFromAgent.size()
-                        + " 段项目经历和 "
-                        + workExperiences.size()
-                        + " 段工作经历。"
-        );
-
-        return new ParseReportResponse(
-                summary,
-                highlights,
-                skillsFromAgent,
-                projectExperiences,
-                resumeExtractionPipeline.toStructuredSkills(skillsFromAgent),
-                projects,
-                experiences,
-                educations,
-                rawBlocks,
-                fields,
-                issues,
-                pipelineDocument.extractionMode() + "_LLM",
-                pipelineDocument.ocrRequired()
-        );
-    }
-
-    private DecisionReportResponse toDecisionReport(ParseReportResponse parseReport, RemoteAnalysisResult response) {
-        int score = defaultInt(response.overallScore());
-        String recommendationLevel = score >= 85 ? "强烈推荐" : score >= 70 ? "建议推进" : score >= 55 ? "保守推进" : "暂缓";
-        String recommendedAction = score >= 85
-                ? "建议推进到下一轮或 Offer 评估阶段，并重点确认入职时间、薪资和团队匹配。"
-                : score >= 70
-                ? "建议继续推进，同时围绕风险点补充验证。"
-                : score >= 55
-                ? "建议谨慎推进，优先补充岗位关键能力的验证。"
-                : "建议暂缓推进，或转入人才库持续观察。";
-
-        List<String> strengths = new ArrayList<>(parseReport.highlights());
-        if (defaultInt(response.skillMatchScore()) >= 80) {
-            strengths.add("技能匹配度较高（" + defaultInt(response.skillMatchScore()) + " 分）");
-        }
-        if (defaultInt(response.experienceScore()) >= 80) {
-            strengths.add("经验匹配度较高（" + defaultInt(response.experienceScore()) + " 分）");
-        }
-
-        List<String> supportingEvidence = new ArrayList<>();
-        supportingEvidence.add("简历摘要：" + parseReport.summary());
-        if (response.feedbackSummary() != null && !response.feedbackSummary().isBlank()) {
-            supportingEvidence.add("面试反馈总结：" + response.feedbackSummary());
-        }
-
-        return new DecisionReportResponse(
-                firstNonBlank(response.recommendationReason(), "已完成岗位适配度分析。"),
-                score,
-                recommendationLevel,
-                recommendedAction,
-                strengths.stream().distinct().toList(),
-                safeList(response.riskPoints()),
-                safeList(response.interviewQuestions()),
-                supportingEvidence,
-                firstNonBlank(response.feedbackSummary(), response.recommendationReason(), "已根据简历与面试反馈生成建议。")
-        );
-    }
-
-    private RemoteCandidateInfo toRemoteCandidateInfo(ParseReportResponse parseReport) {
-        List<RemoteEducation> education = safeList(parseReport.educations()).stream()
-                .map(item -> new RemoteEducation(
-                        firstNonBlank(item.school(), ""),
-                        firstNonBlank(item.summary(), ""),
-                        firstNonBlank(item.degree(), ""),
-                        firstNonBlank(item.period(), "")
-                ))
-                .toList();
-
-        List<RemoteWorkExperience> workExperience = safeList(parseReport.experiences()).stream()
-                .map(item -> new RemoteWorkExperience(
-                        firstNonBlank(item.company(), ""),
-                        firstNonBlank(item.role(), ""),
-                        firstNonBlank(item.period(), ""),
-                        firstNonBlank(item.summary(), "")
-                ))
-                .toList();
-
-        List<RemoteProject> projects = safeList(parseReport.projects()).stream()
-                .map(item -> new RemoteProject(
-                        firstNonBlank(item.projectName(), ""),
-                        firstNonBlank(item.role(), ""),
-                        firstNonBlank(item.summary(), ""),
-                        safeList(item.techStack())
-                ))
-                .toList();
-
-        return new RemoteCandidateInfo(
-                firstNonBlank(parseFieldValue(parseReport, "name"), ""),
-                firstNonBlank(parseFieldValue(parseReport, "phone"), ""),
-                firstNonBlank(parseFieldValue(parseReport, "email"), ""),
-                education,
-                workExperience,
-                projects,
-                safeList(parseReport.extractedSkills()),
-                parseReport.summary()
-        );
     }
 
     private List<RemoteInterviewFeedback> toRemoteInterviewFeedbacks(Object interviewsPayload) {
@@ -487,35 +301,12 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
         }
     }
 
-    private void putField(Map<String, ParseFieldValueResponse> fields, String key, String value, double confidence, String source) {
-        if (value == null || value.isBlank()) {
-            return;
-        }
-        fields.put(key, new ParseFieldValueResponse(value, confidence, source));
-    }
-
     private String parseFieldValue(ParseReportResponse parseReport, String key) {
         if (parseReport.fields() == null) {
             return null;
         }
         ParseFieldValueResponse field = parseReport.fields().get(key);
         return field == null ? null : field.value();
-    }
-
-    private String summarizeEducations(List<RemoteEducation> education) {
-        return education.stream()
-                .map(item -> String.join(" ", safeText(item.school()), safeText(item.degree())).trim())
-                .filter(item -> !item.isBlank())
-                .reduce((left, right) -> left + "；" + right)
-                .orElse(null);
-    }
-
-    private String summarizeExperiences(List<RemoteWorkExperience> experiences) {
-        return experiences.stream()
-                .map(item -> firstNonBlank(item.position(), item.company(), item.duration()))
-                .filter(item -> item != null && !item.isBlank())
-                .reduce((left, right) -> left + "；" + right)
-                .orElse(null);
     }
 
     private int averageScore(Map<String, Integer> scores) {
@@ -588,52 +379,6 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
         return items == null ? List.of() : items;
     }
 
-    private String safeText(String value) {
-        return value == null ? "" : value;
-    }
-
-    private List<String> blankToEmptyList(String value) {
-        return value == null || value.isBlank() ? List.of() : List.of(value);
-    }
-
-    private record RemoteEducation(
-            String school,
-            String major,
-            String degree,
-            String duration
-    ) {
-    }
-
-    private record RemoteWorkExperience(
-            String company,
-            String position,
-            String duration,
-            String description
-    ) {
-    }
-
-    private record RemoteProject(
-            String name,
-            String role,
-            String description,
-            @JsonProperty("tech_stack")
-            List<String> techStack
-    ) {
-    }
-
-    private record RemoteCandidateInfo(
-            String name,
-            String phone,
-            String email,
-            List<RemoteEducation> education,
-            @JsonProperty("work_experience")
-            List<RemoteWorkExperience> workExperience,
-            List<RemoteProject> projects,
-            List<String> skills,
-            String summary
-    ) {
-    }
-
     private record RemoteInterviewFeedback(
             int round,
             String interviewer,
@@ -641,24 +386,6 @@ public class RemoteAgentDispatcher implements AgentDispatcher {
             Integer score,
             List<String> pros,
             List<String> cons
-    ) {
-    }
-
-    private record RemoteAnalysisResult(
-            @JsonProperty("experience_score")
-            Integer experienceScore,
-            @JsonProperty("skill_match_score")
-            Integer skillMatchScore,
-            @JsonProperty("overall_score")
-            Integer overallScore,
-            @JsonProperty("recommendation_reason")
-            String recommendationReason,
-            @JsonProperty("risk_points")
-            List<String> riskPoints,
-            @JsonProperty("interview_questions")
-            List<String> interviewQuestions,
-            @JsonProperty("feedback_summary")
-            String feedbackSummary
     ) {
     }
 }

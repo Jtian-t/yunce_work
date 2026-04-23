@@ -412,7 +412,9 @@ public class LoggingAgentDispatcher implements AgentDispatcher {
                 risks.stream().distinct().toList(),
                 missingInformation.stream().distinct().toList(),
                 supportingEvidence.stream().distinct().toList(),
-                reasoningSummary
+                reasoningSummary,
+                List.of(),
+                List.of()
         );
         return new DecisionComputation(report, dimensionScores);
     }
