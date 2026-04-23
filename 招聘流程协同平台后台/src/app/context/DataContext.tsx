@@ -282,7 +282,16 @@ export interface DecisionReport {
   risks: string[];
   missingInformation: string[];
   supportingEvidence: string[];
+  optimizationSuggestions: string[];
   reasoningSummary: string;
+  interviewRoundSummaries?: {
+    round: number;
+    interviewer: string;
+    score?: number | null;
+    verdict: string;
+    positives: string[];
+    negatives: string[];
+  }[];
 }
 
 export interface AgentJobResult {

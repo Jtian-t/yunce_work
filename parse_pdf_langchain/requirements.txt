@@ -1,0 +1,12 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-dotenv==1.0.0
+python-multipart==0.0.9
+pydantic==2.5.3
+pydantic-settings==2.2.1
+httpx==0.26.0
+PyMuPDF==1.25.3
+rapidocr_onnxruntime==1.4.4
+numpy>=1.26,<3
+langchain==0.1.4
+langchain-openai==0.0.5

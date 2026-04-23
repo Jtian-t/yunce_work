@@ -1566,6 +1566,12 @@ export function CandidateDetail() {
                   正在综合分析候选人情况...
                 </div>
               ) : selectedDecisionReport ? (
+                (() => {
+                  const missingAndFollowups = [
+                    ...selectedDecisionReport.missingInformation,
+                    ...(selectedDecisionReport.optimizationSuggestions ?? []),
+                  ];
+                  return (
                 <div className="space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="rounded-full bg-violet-50 px-3 py-1 text-sm font-medium text-violet-700">
@@ -1615,8 +1621,8 @@ export function CandidateDetail() {
                     <div>
                       <div className="text-sm font-medium text-gray-900">缺失信息 / 待补问</div>
                       <ul className="mt-2 space-y-1 text-sm text-gray-700">
-                        {selectedDecisionReport.missingInformation.length > 0 ? (
-                          selectedDecisionReport.missingInformation.map((item) => <li key={item}>- {item}</li>)
+                        {missingAndFollowups.length > 0 ? (
+                          missingAndFollowups.map((item) => <li key={item}>- {item}</li>)
                         ) : (
                           <li>暂无</li>
                         )}
@@ -1638,7 +1644,28 @@ export function CandidateDetail() {
                     <div className="text-sm font-medium text-gray-900">推理摘要</div>
                     <div className="mt-1 text-sm text-gray-700">{selectedDecisionReport.reasoningSummary}</div>
                   </div>
+
+                  {selectedDecisionReport.interviewRoundSummaries && selectedDecisionReport.interviewRoundSummaries.length > 0 && (
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">面试轮次摘要</div>
+                      <div className="mt-2 space-y-2">
+                        {selectedDecisionReport.interviewRoundSummaries.map((item) => (
+                          <div key={`${item.round}-${item.interviewer}`} className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+                            <div className="font-medium text-gray-900">
+                              第 {item.round} 轮 · {item.interviewer}
+                              {typeof item.score === "number" ? ` · ${item.score} 分` : ""}
+                            </div>
+                            {item.verdict ? <div className="mt-1">{item.verdict}</div> : null}
+                            {item.positives.length > 0 ? <div className="mt-1">正向信号：{item.positives.join("；")}</div> : null}
+                            {item.negatives.length > 0 ? <div className="mt-1">风险点：{item.negatives.join("；")}</div> : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
+                  );
+                })()
               ) : (
                 <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50 p-6 text-sm text-violet-700">
                   还没有辅助决策记录。点击下方按钮即可基于简历、部门反馈和面试记录生成首条建议。
